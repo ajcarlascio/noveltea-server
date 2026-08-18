@@ -1,0 +1,11 @@
+# Master changelog. Individual changesets are SQL-formatted (see A2 / conventions
+# skill): the XML/YAML abstraction fights jsonb, GIN and partial indexes, so this
+# file exists only to order the SQL files.
+#
+# Files are applied in lexicographic filename order. Never renumber or edit a file
+# once it has been merged — Liquibase checksums each changeset and deployed
+# databases will refuse to start.
+databaseChangeLog:
+  - includeAll:
+      path: changes
+      relativeToChangelogFile: true
