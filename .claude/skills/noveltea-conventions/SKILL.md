@@ -57,12 +57,12 @@ Funnel all synced writes through a repository/service layer that does this centr
 
 ## 4. Reading `change_log` — two non-negotiables
 
-**Never write `WHERE id > :since` on its own.** Sequence values become visible at commit, not at insert, so a lower id can appear after a higher one and a client will skip it permanently:
+**Never write `WHERE id > :since` on its own.** Sequence values become visible at commit, not at insert, so a lower id can appear after a higher one and a client will skip it permanently. `change_log.tx_id` (`xid8`, defaulted to `pg_current_xact_id()`) exists solely to gate this — `id` stays the cursor, `tx_id` is the visibility bound:
 
 ```sql
 WHERE project_id = :projectId
   AND id > :since
-  AND id < pg_snapshot_xmin(pg_current_snapshot())   -- required, always
+  AND tx_id < pg_snapshot_xmin(pg_current_snapshot())   -- required, always
 ```
 
 Keep this in exactly one query method. If it appears in two places, one of them will eventually lose the second clause.
@@ -82,6 +82,7 @@ Status codes: `409` version conflict · `501` unimplemented (Pro absent) · `404
 - **One logical change per changeset.** Never edit a changeset that has been merged — Liquibase checksums it and deployed databases will fail on startup. Add a new changeset instead.
 - Always write an explicit `rollback`. Postgres DDL is transactional; there is no excuse for an irreversible changeset.
 - SQL-formatted changelogs only. No XML abstraction — it fights `jsonb`, GIN, and partial indexes.
+- **Never apply changesets with a standalone `liquibase` CLI.** Only `./gradlew :api:update` or Spring's startup runner — both resolve the Boot-managed version. A CLI on a different major version writes incompatible checksums into `DATABASECHANGELOG`, after which the application will not start.
 - Changeset id convention: `YYYYMMDD-NN-short-description`.
 - Any index supporting a smart-collection query or manuscript search should be GIN; state which query it serves in a comment.
 

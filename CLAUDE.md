@@ -72,7 +72,7 @@ Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is inc
 
 1. **Never merge rich text.** On a `document.content` conflict (client `base_version` ≠ server `version`), create a sibling `binder_item` titled `<title> (Conflicted Copy, <device>, <timestamp>)` holding the client's version and let the user reconcile. A rich-text merge algorithm is out of scope, permanently.
 2. **Tree conflicts are last-write-wins** by server timestamp. Moves, renames, and reorders are low-stakes; prose is not.
-3. **`bigserial` alone is an unsafe cursor.** Sequence values are assigned at insert but become visible at commit, so a txn holding id 100 can commit *after* one holding 101 — a client that has seen 101 and asks `> 101` misses 100 forever. Only serve rows below `pg_snapshot_xmin(pg_current_snapshot())`, or assign the cursor at commit time.
+3. **`bigserial` alone is an unsafe cursor.** Sequence values are assigned at insert but become visible at commit, so a txn holding id 100 can commit *after* one holding 101 — a client that has seen 101 and asks `> 101` misses 100 forever. `change_log` therefore carries `tx_id xid8 NOT NULL DEFAULT pg_current_xact_id()`, and every read must gate on `tx_id < pg_snapshot_xmin(pg_current_snapshot())`. The bound applies to `tx_id`, never to `id` — comparing a `bigint` cursor against an `xid8` is a type error, and `id` remains the cursor.
 4. **`order_index` is a lexicographic string, not a float.** Fractional indexing on IEEE doubles exhausts precision after ~50 consecutive inserts between the same two siblings. Use the `fractional-indexing` string algorithm — unbounded, sorts natively in both Postgres and SQLite.
 5. **The sync feed is visibility-filtered** whenever a `SharingProvider` is present. A raw per-project `change_log` read is a data leak.
 6. Deletes are soft (`deleted_at` + tombstone). Trash is a real node — "delete" reparents to it; only "empty trash" hard-deletes.
@@ -95,23 +95,39 @@ These tables live in **core** migrations even though the feature is Pro — sche
 
 **The easiest thing to get wrong:** `GET /sync` must filter `change_log` rows against the caller's scope and role. Deletions must stay observable to scoped clients without leaking titles or the existence of out-of-scope siblings. Every entity type added to `change_log` needs its visibility rule written at the same time.
 
+## Toolchain
+
+- **JDK 21 (LTS)**, pinned via the Gradle toolchain in the root `build.gradle.kts` so CI and contributors never compile against a stray `PATH` JDK — Gradle provisions it if absent.
+- **Virtual threads are on** (`spring.threads.virtual.enabled: true`). Both hot paths — sync requests and compile-job dispatch — are I/O-bound waiting on Postgres or the worker, which is exactly the case they serve. Avoid `synchronized` blocks around blocking I/O; they pin the carrier thread.
+- **Gradle owns `:api` only.** The compile worker is a plain npm/TypeScript package under `worker/`, built by npm. There is no `:worker` Gradle project.
+- **Hibernate runs `ddl-auto: validate`.** Liquibase owns the schema; Hibernate must never alter it.
+- **One Liquibase runtime, always.** The version is whatever the Spring Boot BOM manages — deliberately not pinned separately. `io.spring.dependency-management` applies the BOM to the `liquibaseRuntime` configuration as well, so `./gradlew :api:update` and the changelogs Spring applies at startup execute the *same* Liquibase code. **Never run a standalone `liquibase` CLI against a NovelTea database**, whatever version is on `PATH`. Liquibase changes checksum computation across major versions: a CLI on a different major writes `DATABASECHANGELOG` checksums the application runtime then rejects, and the app refuses to boot against a database that is in fact correctly migrated. Recovering means hand-editing checksums in a live table. Verify the resolved version with:
+  ```bash
+  ./gradlew :api:dependencies --configuration liquibaseRuntime | grep liquibase-core
+  ./gradlew :api:dependencies --configuration runtimeClasspath  | grep liquibase-core
+  ```
+  Those two must print the same version. If they ever diverge, fix that before running any migration.
+- **Tests run against Testcontainers Postgres, never H2.** The `tx_id` / `pg_snapshot_xmin` visibility gate and the concurrent-commit ordering case both depend on real Postgres MVCC semantics and cannot be reproduced on an in-memory database.
+
 ## Commands
 
-Assumes a Gradle multi-module build (`:api`, `:worker`). None of this exists yet.
+The Gradle wrapper jar is not committed yet — run `gradle wrapper --gradle-version 8.10` once (needs a local Gradle) to generate `gradlew`, or substitute `gradle` for `./gradlew` below.
 
 ```bash
+docker compose up -d             # local Postgres 16
+
 ./gradlew build                  # compile + test everything
 ./gradlew :api:bootRun           # run the API server
 ./gradlew :api:test              # all API tests
 ./gradlew :api:test --tests 'com.noveltea.sync.SyncServiceTest'
 ./gradlew :api:test --tests 'com.noveltea.sync.SyncServiceTest.rejectsStaleBaseVersion'   # single test
-./gradlew spotlessApply          # format
 
 # Liquibase (Spring also applies changelogs on startup)
 ./gradlew :api:update            # apply pending changesets
+./gradlew :api:status            # what would be applied
 ./gradlew :api:rollbackCount -PliquibaseCommandValue=1
 
-# Compile worker
+# Compile worker (npm, not Gradle)
 cd worker && npm run dev
 cd worker && npm test -- src/export/epub.test.ts     # single test file
 ```

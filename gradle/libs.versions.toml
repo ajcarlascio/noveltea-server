@@ -1,0 +1,17 @@
+# Version catalogue. Plugin versions are pinned here; library versions are left to
+# the Spring Boot BOM wherever it manages them, so they move as a coherent set.
+[versions]
+springBoot = "3.5.0"
+springDependencyManagement = "1.1.7"
+liquibaseGradle = "2.2.2"
+picocli = "4.7.6"
+testcontainers = "1.20.4"
+
+[libraries]
+picocli = { module = "info.picocli:picocli", version.ref = "picocli" }
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+
+[plugins]
+springBoot = { id = "org.springframework.boot", version.ref = "springBoot" }
+springDependencyManagement = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+liquibase = { id = "org.liquibase.gradle", version.ref = "liquibaseGradle" }
