@@ -57,12 +57,12 @@ Funnel all synced writes through a repository/service layer that does this centr
 
 ## 4. Reading `change_log` — two non-negotiables
 
-**Never write `WHERE id > :since` on its own.** Sequence values become visible at commit, not at insert, so a lower id can appear after a higher one and a client will skip it permanently:
+**Never write `WHERE id > :since` on its own.** Sequence values become visible at commit, not at insert, so a lower id can appear after a higher one and a client will skip it permanently. `change_log.tx_id` (`xid8`, defaulted to `pg_current_xact_id()`) exists solely to gate this — `id` stays the cursor, `tx_id` is the visibility bound:
 
 ```sql
 WHERE project_id = :projectId
   AND id > :since
-  AND id < pg_snapshot_xmin(pg_current_snapshot())   -- required, always
+  AND tx_id < pg_snapshot_xmin(pg_current_snapshot())   -- required, always
 ```
 
 Keep this in exactly one query method. If it appears in two places, one of them will eventually lose the second clause.
