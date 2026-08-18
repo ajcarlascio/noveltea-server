@@ -101,6 +101,12 @@ These tables live in **core** migrations even though the feature is Pro — sche
 - **Virtual threads are on** (`spring.threads.virtual.enabled: true`). Both hot paths — sync requests and compile-job dispatch — are I/O-bound waiting on Postgres or the worker, which is exactly the case they serve. Avoid `synchronized` blocks around blocking I/O; they pin the carrier thread.
 - **Gradle owns `:api` only.** The compile worker is a plain npm/TypeScript package under `worker/`, built by npm. There is no `:worker` Gradle project.
 - **Hibernate runs `ddl-auto: validate`.** Liquibase owns the schema; Hibernate must never alter it.
+- **One Liquibase runtime, always.** The version is whatever the Spring Boot BOM manages — deliberately not pinned separately. `io.spring.dependency-management` applies the BOM to the `liquibaseRuntime` configuration as well, so `./gradlew :api:update` and the changelogs Spring applies at startup execute the *same* Liquibase code. **Never run a standalone `liquibase` CLI against a NovelTea database**, whatever version is on `PATH`. Liquibase changes checksum computation across major versions: a CLI on a different major writes `DATABASECHANGELOG` checksums the application runtime then rejects, and the app refuses to boot against a database that is in fact correctly migrated. Recovering means hand-editing checksums in a live table. Verify the resolved version with:
+  ```bash
+  ./gradlew :api:dependencies --configuration liquibaseRuntime | grep liquibase-core
+  ./gradlew :api:dependencies --configuration runtimeClasspath  | grep liquibase-core
+  ```
+  Those two must print the same version. If they ever diverge, fix that before running any migration.
 - **Tests run against Testcontainers Postgres, never H2.** The `tx_id` / `pg_snapshot_xmin` visibility gate and the concurrent-commit ordering case both depend on real Postgres MVCC semantics and cannot be reproduced on an in-memory database.
 
 ## Commands

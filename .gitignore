@@ -1,9 +1,10 @@
 # Gradle / JVM
 .gradle/
 build/
-!gradle/wrapper/gradle-wrapper.jar
 *.class
 *.jar
+# ...but the Gradle wrapper jar must be committed, or ./gradlew cannot bootstrap.
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 out/
 
@@ -37,3 +38,7 @@ application-local.yml
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local Gradle distribution — belongs outside the repo, not in it
+/gradle-*-bin.zip
+/gradle-[0-9]*/
