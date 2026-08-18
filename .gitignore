@@ -1,0 +1,39 @@
+# Gradle / JVM
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+*.class
+*.jar
+*.war
+out/
+
+# Node / worker
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+.npm/
+
+# Local config & secrets
+.env
+.env.*
+!.env.example
+*.local
+application-local.yml
+*.pem
+*.key
+
+# Export / compile scratch output
+/tmp-compile/
+*.epub
+*.docx
+*.odt
+*.rtf
+*.pdf
+
+# Editors / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
