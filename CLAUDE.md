@@ -95,23 +95,33 @@ These tables live in **core** migrations even though the feature is Pro — sche
 
 **The easiest thing to get wrong:** `GET /sync` must filter `change_log` rows against the caller's scope and role. Deletions must stay observable to scoped clients without leaking titles or the existence of out-of-scope siblings. Every entity type added to `change_log` needs its visibility rule written at the same time.
 
+## Toolchain
+
+- **JDK 21 (LTS)**, pinned via the Gradle toolchain in the root `build.gradle.kts` so CI and contributors never compile against a stray `PATH` JDK — Gradle provisions it if absent.
+- **Virtual threads are on** (`spring.threads.virtual.enabled: true`). Both hot paths — sync requests and compile-job dispatch — are I/O-bound waiting on Postgres or the worker, which is exactly the case they serve. Avoid `synchronized` blocks around blocking I/O; they pin the carrier thread.
+- **Gradle owns `:api` only.** The compile worker is a plain npm/TypeScript package under `worker/`, built by npm. There is no `:worker` Gradle project.
+- **Hibernate runs `ddl-auto: validate`.** Liquibase owns the schema; Hibernate must never alter it.
+- **Tests run against Testcontainers Postgres, never H2.** The `tx_id` / `pg_snapshot_xmin` visibility gate and the concurrent-commit ordering case both depend on real Postgres MVCC semantics and cannot be reproduced on an in-memory database.
+
 ## Commands
 
-Assumes a Gradle multi-module build (`:api`, `:worker`). None of this exists yet.
+The Gradle wrapper jar is not committed yet — run `gradle wrapper --gradle-version 8.10` once (needs a local Gradle) to generate `gradlew`, or substitute `gradle` for `./gradlew` below.
 
 ```bash
+docker compose up -d             # local Postgres 16
+
 ./gradlew build                  # compile + test everything
 ./gradlew :api:bootRun           # run the API server
 ./gradlew :api:test              # all API tests
 ./gradlew :api:test --tests 'com.noveltea.sync.SyncServiceTest'
 ./gradlew :api:test --tests 'com.noveltea.sync.SyncServiceTest.rejectsStaleBaseVersion'   # single test
-./gradlew spotlessApply          # format
 
 # Liquibase (Spring also applies changelogs on startup)
 ./gradlew :api:update            # apply pending changesets
+./gradlew :api:status            # what would be applied
 ./gradlew :api:rollbackCount -PliquibaseCommandValue=1
 
-# Compile worker
+# Compile worker (npm, not Gradle)
 cd worker && npm run dev
 cd worker && npm test -- src/export/epub.test.ts     # single test file
 ```
