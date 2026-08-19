@@ -1,46 +1,46 @@
 package com.noveltea.sync;
 
+import com.noveltea.auth.CurrentUser;
+import com.noveltea.auth.ProjectAccess;
 import com.noveltea.sync.dto.SyncDtos.PullResponse;
 import com.noveltea.sync.dto.SyncDtos.PushRequest;
 import com.noveltea.sync.dto.SyncDtos.PushResponse;
 import java.util.UUID;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/projects/{projectId}/sync")
 public class SyncController {
 
     private final SyncService sync;
+    private final ProjectAccess access;
 
-    public SyncController(SyncService sync) {
+    public SyncController(SyncService sync, ProjectAccess access) {
         this.sync = sync;
+        this.access = access;
     }
 
-    /**
-     * TODO(auth): projectId is trusted from the path and deviceId from a header. Once
-     * device-paired JWTs exist, both must come from the authenticated principal, and
-     * this endpoint must filter the feed by the caller's role and subtree scope.
-     */
     @GetMapping
     public PullResponse pull(
+            @AuthenticationPrincipal CurrentUser user,
             @PathVariable UUID projectId,
             @RequestParam(defaultValue = "0") long since,
             @RequestParam(defaultValue = "200") int limit) {
+        access.requireReadable(user, projectId);
         return sync.pull(projectId, since, limit);
     }
 
+    /**
+     * The device is taken from the access token, never from a header — a client cannot
+     * attribute its writes to somebody else's device.
+     */
     @PostMapping
     public PushResponse push(
+            @AuthenticationPrincipal CurrentUser user,
             @PathVariable UUID projectId,
-            @RequestHeader(value = "X-Device-Id", required = false) UUID deviceId,
             @RequestBody PushRequest request) {
-        return sync.push(projectId, deviceId, request.changes());
+        access.requireWritable(user, projectId);
+        return sync.push(projectId, user.deviceId(), request.changes());
     }
 }
