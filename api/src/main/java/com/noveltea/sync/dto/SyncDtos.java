@@ -23,7 +23,18 @@ public final class SyncDtos {
      *     the table maximum. A client that advanced past unserved rows would skip them
      *     permanently.
      */
-    public record PullResponse(List<ChangeRecord> changes, long latestId, boolean hasMore) {}
+    /**
+     * @param resyncRequired the client's cursor points into history that has been purged.
+     *     It must rebuild from the current state (binder + documents) and resume at
+     *     {@code latestId}, because the feed can no longer explain how things got here.
+     */
+    public record PullResponse(
+            List<ChangeRecord> changes, long latestId, boolean hasMore, boolean resyncRequired) {
+
+        public PullResponse(List<ChangeRecord> changes, long latestId, boolean hasMore) {
+            this(changes, latestId, hasMore, false);
+        }
+    }
 
     public record ChangeRequest(
             String entityType, UUID entityId, String op, Long baseVersion, JsonNode data) {}
