@@ -222,4 +222,37 @@ class WebApiTest extends AbstractPostgresTest {
                 .doesNotContain("postgres").doesNotContain("jdbc")
                 .doesNotContain("version").doesNotContain("localhost");
     }
+
+    @Test
+    @DisplayName("a NUL byte in a JSON field is a 400, not a 500")
+    void nulByteInBodyIsBadRequest() throws Exception {
+        Session session = register();
+        String payload = "{\"title\":\"A\\u0000B\"}";
+
+        MvcResult result = mvc.perform(post("/api/v1/projects")
+                        .header("Authorization", "Bearer " + session.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(payload))
+                .andReturn();
+
+        assertThat(result.getResponse().getStatus())
+                .as("Postgres text cannot hold U+0000; reaching the driver reports 500")
+                .isEqualTo(400);
+        assertThat(body(result).get("message").asText()).contains("null character");
+    }
+
+    @Test
+    @DisplayName("a NUL byte in a query parameter is a 400, not a 500")
+    void nulByteInQueryIsBadRequest() throws Exception {
+        Session session = register();
+        UUID projectId = UUID.randomUUID();
+        jdbc.sql("INSERT INTO project (id, owner_id, title) VALUES (:id, :o, 'Mine')")
+                .param("id", projectId).param("o", session.userId()).update();
+
+        MvcResult result = mvc.perform(get("/api/v1/projects/{id}/search", projectId)
+                        .queryParam("q", "A\u0000B")
+                        .header("Authorization", "Bearer " + session.accessToken()))
+                .andReturn();
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(400);
+    }
 }

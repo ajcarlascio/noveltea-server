@@ -76,3 +76,10 @@ noveltea:
     # A browser client on another origin must be listed here. Empty means same-origin only.
     #   allowed-origins: ["https://app.example.com"]
     allowed-origins: []
+
+  retention:
+    # A device offline longer than change-log-retention must resync from scratch.
+    change-log-retention: 90d
+    tombstone-retention: 180d
+    artifact-grace: 1d
+    expired-credential-retention: 30d

@@ -52,3 +52,11 @@ noveltea:
     enabled: false
   cors:
     allowed-origins: []
+
+  retention:
+    # The scheduler is off in tests; the sweep is driven directly.
+    enabled: false
+    change-log-retention: 90d
+    tombstone-retention: 180d
+    artifact-grace: 1d
+    expired-credential-retention: 30d

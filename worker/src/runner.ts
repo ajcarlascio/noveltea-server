@@ -13,7 +13,12 @@ const EXTENSIONS: Record<string, string> = { txt: "txt", md: "md", html: "html" 
  * newline. Anything outside a conservative set is replaced rather than escaped, because
  * this value becomes a path and a Content-Disposition header.
  */
-export function filenameFor(title: string, format: string, now = new Date()): string {
+export function filenameFor(
+  title: string,
+  format: string,
+  now = new Date(),
+  jobId = "",
+): string {
   const slug = title
     .normalize("NFKD")
     .replace(/[^\w\s-]/g, "")
@@ -22,7 +27,14 @@ export function filenameFor(title: string, format: string, now = new Date()): st
     .toLowerCase()
     .slice(0, 60) || "manuscript";
   const stamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  return `${slug}-${stamp}.${EXTENSIONS[format] ?? format}`;
+  // The timestamp only resolves to seconds, so two exports of one project queued together
+  // produced the same name and silently overwrote each other — a download then served
+  // another job's content. The job id makes every artifact distinct.
+  // Sanitised, not trusted: ids are database UUIDs today, but this value becomes a path,
+  // and "../../et" is one refactor away from being a filename component.
+  const safeId = jobId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8);
+  const unique = safeId ? `-${safeId}` : "";
+  return `${slug}-${stamp}${unique}.${EXTENSIONS[format] ?? format}`;
 }
 
 /** `download` is staged for collection; `server` lands in the operator's mount. */
@@ -70,7 +82,7 @@ export async function runJob(
   const directory = directoryFor(job, config);
   await mkdir(directory, { recursive: true });
 
-  const filename = filenameFor(projectTitle, job.format, now);
+  const filename = filenameFor(projectTitle, job.format, now, job.id);
   const path = join(directory, filename);
   await writeFile(path, result.output, "utf8");
 

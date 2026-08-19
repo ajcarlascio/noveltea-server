@@ -56,3 +56,29 @@ describe("destinations", () => {
     assert.notEqual(directoryFor(job("download"), config), directoryFor(job("server"), config));
   });
 });
+
+describe("artifact collisions", () => {
+  const at = new Date("2026-08-19T12:34:56.000Z");
+
+  test("two exports of the same project in the same second do not share a filename", () => {
+    const first = filenameFor("The Lighthouse", "md", at, "aaaaaaaa-1111-2222-3333-444444444444");
+    const second = filenameFor("The Lighthouse", "md", at, "bbbbbbbb-1111-2222-3333-444444444444");
+
+    assert.notEqual(
+      first,
+      second,
+      "identical names let one export overwrite another, so a download serves the wrong content",
+    );
+  });
+
+  test("the same job always produces the same name", () => {
+    const id = "cccccccc-1111-2222-3333-444444444444";
+    assert.equal(filenameFor("Book", "txt", at, id), filenameFor("Book", "txt", at, id));
+  });
+
+  test("the job id cannot smuggle path separators into the name", () => {
+    const name = filenameFor("Book", "txt", at, "../../etc/passwd");
+    assert.doesNotMatch(name, /\//);
+    assert.doesNotMatch(name, /\.\./);
+  });
+});

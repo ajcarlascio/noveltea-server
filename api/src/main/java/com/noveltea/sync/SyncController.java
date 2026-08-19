@@ -28,7 +28,7 @@ public class SyncController {
             @RequestParam(defaultValue = "0") long since,
             @RequestParam(defaultValue = "200") int limit) {
         access.requireReadable(user, projectId);
-        return sync.pull(projectId, since, limit);
+        return sync.pull(projectId, user.deviceId(), since, limit);
     }
 
     /**
