@@ -8,7 +8,7 @@ Greenfield — nothing is scaffolded yet. The design of record is `docs/design/v
 
 ## What this is
 
-NovelTea is a self-hosted, offline-first long-form writing app, Scrivener-shaped: a binder tree, document snapshots, labels/statuses, custom metadata, saved/smart collections, and compile presets. Clients are web, Tauri (Windows/macOS), and iOS. Every client keeps a full local replica and works fully disconnected.
+NovelTea is a self-hosted, offline-first long-form writing app built around a binder tree, document snapshots, labels and statuses, custom metadata, saved and smart collections, and compile presets. Clients are web, Tauri (Windows/macOS), and iOS. Every client keeps a full local replica and works fully disconnected.
 
 Copyright Anthony Carlascio. This repo is the **open core** under Elastic License 2.0; commercial features live in a separate private repo (see Editions).
 
@@ -184,6 +184,17 @@ Rules worth keeping:
 
 - **`WireEnumTest`** drives off the enum constants themselves, so a new value is covered the moment it is added: round-tripping, unique lowercase wire forms, case and whitespace tolerance, and empty (never an exception) for null, blank, unknown and injection-shaped input.
 - **`EnumSchemaAlignmentTest`** reads the allowed values out of `pg_constraint` and compares them to the enum, then writes every value to the real table. The enum and the CHECK constraint are two declarations of one fact in different languages; nothing but this keeps them honest. Add a value to one and not the other and it fails, naming the constraint.
+
+## User-generated content is hostile
+
+Document JSON arrives from clients and is stored as-is. Two rules follow:
+
+- **Link hrefs are allowlisted, not escaped.** Escaping does nothing to `javascript:alert(1)` — there is nothing in it to escape. `isSafeHref` permits `http`, `https`, `mailto` and relative references, normalising away case, whitespace and control characters first, and fails closed on anything unlisted. An unsafe link loses its anchor and keeps its text, and the author is warned. This applies to Markdown too: markdown links execute in renderers.
+- **All text is escaped on output**, and a test feeds `<script>` through as author text and asserts it parses back as text rather than an element.
+
+We do not store HTML, so there is nothing to sanitise on write; the exposure is entirely on the way out.
+
+`IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
 
 ## Compile
 

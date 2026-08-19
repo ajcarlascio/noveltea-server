@@ -28,7 +28,7 @@ The top-level container (one "book").
 
 ### binder_item
 
-The tree structure — folders, documents, trash. This is the Scrivener "binder."
+The tree structure — folders, documents, trash. This is the "binder": the outline the author navigates.
 
 | field | type | notes |
 |---|---|---|
@@ -38,7 +38,7 @@ The tree structure — folders, documents, trash. This is the Scrivener "binder.
 | type | enum | `folder` \| `document` \| `trash` |
 | title | text | |
 | order_index | float | fractional indexing — lets you reorder/insert without rewriting siblings *(superseded — see A4)* |
-| icon | text, nullable | optional custom icon (Scrivener-style) |
+| icon | text, nullable | optional custom icon for the binder row |
 | deleted_at | timestamptz, nullable | soft delete — needed for sync tombstones |
 | version | bigint | monotonic, incremented on every change |
 | updated_by_device_id | uuid | for conflict attribution |
@@ -55,14 +55,14 @@ Trash is just a special parent — moving something to trash sets parent_id to t
 | id | uuid | same as binder_item.id, or separate FK — recommend same id for simplicity |
 | content | jsonb | ProseMirror doc JSON |
 | word_count | int | derived, cached for fast binder display |
-| synopsis | text, nullable | the Scrivener index-card text |
+| synopsis | text, nullable | short index-card summary shown on the corkboard |
 | notes | text, nullable | document notes (rich text or plain) |
 | version | bigint | incremented per content save |
 | updated_at | timestamptz | |
 
 ### snapshot
 
-Manual or auto point-in-time captures of a document's content (Scrivener's snapshot feature).
+Manual or automatic point-in-time captures of a document's content, so an author can revert a revision pass.
 
 | field | type | notes |
 |---|---|---|
@@ -75,7 +75,7 @@ Manual or auto point-in-time captures of a document's content (Scrivener's snaps
 
 ### label / status
 
-Scrivener-style metadata taxonomies, per project.
+Metadata taxonomies, per project.
 
 | field | type | notes |
 |---|---|---|
@@ -89,7 +89,7 @@ binder_item gets label_id and status_id nullable FKs.
 
 ### custom_metadata_field + custom_metadata_value
 
-For arbitrary user-defined metadata (Scrivener's custom meta-data pane). Field defs at the project level, values keyed per binder_item.
+For arbitrary user-defined metadata. Field definitions live at the project level, values are keyed per binder_item.
 
 ### collection
 
@@ -153,7 +153,7 @@ This is the key piece that makes offline sync tractable without full CRDT machin
 - Each entity carries a version integer, bumped on every write.
 - Client pushes a batch: {entity, base_version, new_data} for each locally-changed record since last sync.
 - Server accepts if base_version matches current server version (no one else changed it since the client last knew about it). Otherwise it's a conflict.
-- On conflict for document content: don't try to merge rich text — create a sibling binder_item titled "<original title> (Conflicted Copy, <device>, <timestamp>)" containing the client's version, and let the user manually reconcile. This mirrors Dropbox/Scrivener's own real-world behavior and avoids building a merge algorithm for rich text, which is a rabbit hole.
+- On conflict for document content: don't try to merge rich text — create a sibling binder_item titled "<original title> (Conflicted Copy, <device>, <timestamp>)" containing the client's version, and let the user manually reconcile. This is the established behaviour for file sync generally, and avoids building a merge algorithm for rich text, which is a rabbit hole.
 - On conflict for tree structure (moves/renames/reorders): last-write-wins by server timestamp is fine — much lower stakes than losing prose.
 - Sync trigger: client-side connectivity monitor starts a 15-minute timer on regaining connection; only fires sync if the connection holds for the full window (resets on drop). Manual "sync now" button always available as an override.
 
