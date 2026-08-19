@@ -196,6 +196,20 @@ We do not store HTML, so there is nothing to sanitise on write; the exposure is 
 
 `IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
 
+## Snapshots
+
+Point-in-time copies of a document, so a revision pass can be undone. `POST /documents/{id}/snapshots` captures, `GET` lists, `POST /snapshots/{id}/restore` puts one back.
+
+**Manual snapshots sync; automatic ones do not.** A snapshot is a full copy of a document. Syncing every autosave capture across three devices would put hundreds of megabytes of history on a phone for prose it may never open, and would make snapshots the heaviest thing in a feed designed to be frugal. But keeping all of them local means a lost laptop takes its entire revision history with it, which contradicts everything else here. A manual snapshot is a deliberate "keep this version" and is rare enough to copy; `is_automatic` is what carries that distinction, and only manual snapshots append to `change_log`.
+
+Consequences worth holding on to:
+
+- **The feed carries snapshot metadata, never content** (`to_jsonb(t) - 'content'`). Clients fetch a body from `GET /snapshots/{id}` when the author actually opens it. Parenthesise that expression: `to_jsonb(t) - 'content'::text` casts the key, not the result.
+- **Anything arriving over sync is manual by definition**, and is stored that way regardless of what the payload claims.
+- **Snapshots are immutable.** Create and delete only; an update is refused rather than rewriting history.
+- **Restoring is itself undoable** — the pre-restore state is captured automatically first, so an author who reverts to the wrong version has not lost the newer one. Restore also takes a `baseVersion` and refuses a stale one, so it cannot overwrite an edit made on another device.
+- **Only automatic snapshots are pruned** (`noveltea.snapshots.keep-automatic-per-document`). A manual snapshot is something the author asked for; deleting it is not the server's decision.
+
 ## Compile pipeline
 
 `POST /projects/{id}/compile` queues a `compile_job` and returns immediately. The Node worker in `worker/` claims it, renders it with `@noveltea/compile`, writes the artifact and records the result. `GET /compile-jobs/{id}` reports status; `/download` streams the file.

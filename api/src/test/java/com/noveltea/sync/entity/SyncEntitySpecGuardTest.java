@@ -149,9 +149,11 @@ class SyncEntitySpecGuardTest extends AbstractPostgresTest {
     @DisplayName("GUARD: every EntityType is either spec-driven or deliberately hand-written")
     void everyEntityTypeIsHandled() {
         // Documents and binder items carry conflict copies and tree semantics that no
-        // declarative spec should own. project_member is read-only in Core.
-        List<EntityType> handledElsewhere =
-                List.of(EntityType.DOCUMENT, EntityType.BINDER_ITEM, EntityType.PROJECT_MEMBER);
+        // declarative spec should own. Snapshots are immutable and only sync when manual,
+        // which a column spec cannot express. project_member is read-only in Core.
+        List<EntityType> handledElsewhere = List.of(
+                EntityType.DOCUMENT, EntityType.BINDER_ITEM,
+                EntityType.SNAPSHOT, EntityType.PROJECT_MEMBER);
 
         for (EntityType type : EntityType.values()) {
             boolean spec = SyncEntitySpec.forType(type).isPresent();

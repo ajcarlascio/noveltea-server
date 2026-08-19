@@ -42,3 +42,8 @@ noveltea:
     storage-path: ${java.io.tmpdir:/tmp}/noveltea-test-exports
     staging-path: ${java.io.tmpdir:/tmp}/noveltea-test-staging
     download-ttl: 1h
+
+  snapshots:
+    # Automatic captures are pruned to this many per document. Manual snapshots are never
+    # pruned: the author asked for those.
+    keep-automatic-per-document: 25
