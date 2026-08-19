@@ -8,6 +8,7 @@ import com.noveltea.binder.BinderExceptions.BinderItemNotFound;
 import com.noveltea.binder.BinderExceptions.CrossProjectMove;
 import com.noveltea.merge.MergeExceptions.NotAConflictCopy;
 import com.noveltea.merge.MergeExceptions.StaleOriginal;
+import com.noveltea.project.ProjectExceptions.ProjectNotDeleted;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -77,6 +78,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> invalidMove(RuntimeException e, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of("invalid_move", e.getMessage(), request.getRequestURI()));
+    }
+
+    @ExceptionHandler(ProjectNotDeleted.class)
+    public ResponseEntity<ApiError> notDeleted(ProjectNotDeleted e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("project_not_deleted", e.getMessage(), request.getRequestURI()));
     }
 
     @ExceptionHandler(StaleOriginal.class)

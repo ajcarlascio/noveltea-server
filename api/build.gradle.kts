@@ -36,8 +36,12 @@ dependencies {
 liquibase {
     activities.register("main") {
         this.arguments = mapOf(
-            "changelogFile" to "src/main/resources/db/changelog/db.changelog-master.yaml",
-            "searchPath" to projectDir.absolutePath,
+            // Liquibase records the changelog path as part of each changeset's identity.
+            // These must match what Spring uses at startup ("classpath:db/changelog/..."),
+            // or the same changeset is seen as two: Spring finds none applied and tries to
+            // recreate a schema that already exists.
+            "changelogFile" to "db/changelog/db.changelog-master.yaml",
+            "searchPath" to file("src/main/resources").absolutePath,
             "url" to (project.findProperty("db.url") ?: "jdbc:postgresql://localhost:5432/noveltea"),
             "username" to (project.findProperty("db.username") ?: "noveltea"),
             "password" to (project.findProperty("db.password") ?: "noveltea")
