@@ -165,13 +165,25 @@ public class GlobalExceptionHandler {
                 .body(ApiError.of("internal_error", "internal error", request.getRequestURI()));
     }
 
-    /** Only messages we authored are echoed; framework text can carry internals. */
+    /**
+     * Only messages we authored are echoed; framework text can carry class names, SQL and
+     * parameter values.
+     *
+     * <p>Validation thrown during JSON deserialization arrives wrapped by Jackson, so the
+     * cause chain is walked for an {@link IllegalArgumentException} — ours — rather than
+     * reporting a useless "malformed request" for a specific, fixable problem.
+     */
     private static String safeMessage(Exception e) {
-        if (e instanceof IllegalArgumentException && e.getMessage() != null) {
-            return e.getMessage();
-        }
         if (e instanceof MissingServletRequestParameterException missing) {
             return "missing required parameter: " + missing.getParameterName();
+        }
+        for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+            if (cause instanceof IllegalArgumentException && cause.getMessage() != null) {
+                return cause.getMessage();
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
         }
         return "malformed request";
     }

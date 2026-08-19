@@ -70,7 +70,33 @@ public class SyncService {
      * client advance its cursor past a row it will never be offered again.
      */
     public PullResponse pull(UUID projectId, long since, int limit) {
+        return pull(projectId, null, since, limit);
+    }
+
+    public PullResponse pull(UUID projectId, UUID deviceId, long since, int limit) {
         Objects.requireNonNull(projectId, "projectId");
+
+        // If the feed has been trimmed past this cursor, the client cannot be told what
+        // changed — only that it must look again. Returning a partial feed instead would
+        // leave it holding documents whose deletions it will never hear about.
+        long purgedBelow = jdbc.sql("SELECT change_log_purged_below FROM project WHERE id = :id")
+                .param("id", projectId).query(Long.class).optional().orElse(0L);
+        // Strictly below: a cursor sitting exactly at the purge point has seen everything
+        // that was removed, and asks only for rows that still exist.
+        if (purgedBelow > 0 && since < purgedBelow) {
+            long currentMax = jdbc.sql("""
+                    SELECT coalesce(max(id), 0) FROM change_log
+                     WHERE project_id = :projectId
+                       AND tx_id < pg_snapshot_xmin(pg_current_snapshot())
+                    """)
+                    .param("projectId", projectId).query(Long.class).single();
+
+            // Never below the purge point, even when the feed is now empty. Resuming at 0
+            // would put the client straight back into a resync, forever.
+            long resumeAt = Math.max(purgedBelow, currentMax);
+            return new PullResponse(List.of(), resumeAt, false, true);
+        }
+
         int capped = Math.min(Math.max(limit, 1), limits.maxSyncPageSize());
 
         List<Map<String, Object>> rows = jdbc.sql("""
@@ -122,7 +148,20 @@ public class SyncService {
                     data));
             latest = id;
         }
-        return new PullResponse(changes, latest, hasMore);
+
+        // Records how far this device has read, which is what lets retention know when a
+        // delete row is safe to remove. Only ever moves forward.
+        if (deviceId != null && latest > since) {
+            jdbc.sql("""
+                    UPDATE device
+                       SET last_seen_change_id = greatest(coalesce(last_seen_change_id, 0), :latest),
+                           last_synced_at = now()
+                     WHERE id = :deviceId
+                    """)
+                    .param("latest", latest).param("deviceId", deviceId).update();
+        }
+
+        return new PullResponse(changes, latest, hasMore, false);
     }
 
     /**

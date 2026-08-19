@@ -196,6 +196,36 @@ We do not store HTML, so there is nothing to sanitise on write; the exposure is 
 
 `IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
 
+## Known weak points
+
+Found by an adversarial pass against the running stack. None is a data-exposure bug; all are availability or abuse risks that need addressing before this faces the open internet.
+
+- **No rate limiting anywhere.** 25 failed logins were served in 0.1s. Password guessing, credential stuffing and endpoint hammering are all unthrottled. Login, refresh and pairing redemption need it most.
+- **No per-account compile quota.** 30 jobs were accepted instantly; each writes a file. An authenticated user can fill the export volume. The retention sweep reclaims it only after the TTL.
+- **No explicit request body ceiling.** An 8MB body is accepted silently; 32MB is dropped at the transport layer rather than answered with 413.
+- **The sync feed is bounded by rows, not bytes.** A page of 500 documents has no size limit, which matters on mobile data.
+- **An access token outlives device revocation** by up to its 15-minute TTL. The refresh token is rejected immediately, so the window is bounded, but revocation is not instant. Fixing it properly means a revocation check on each request, which trades a database read per call.
+
+What held up: JWT forgery (`alg:none`, tampered payload, wrong key), cross-account access on every route, SQL and template injection, path traversal, malformed JSON, and oversized pages. Nothing returned 500 and nothing leaked internals.
+
+## Retention
+
+An hourly sweep (`RetentionService`) removes what nothing will read again: old feed rows, tombstones, expired exports, spent pairing codes and dead invitations.
+
+**The change feed is the dangerous one.** A client that has been offline learns an item was deleted *only* from its delete row. Purge that row too early and the client keeps a document its author threw away, permanently, because no later sync mentions it again. So a row is removed only when both hold:
+
+1. it is older than `changeLogRetention`, **and**
+2. every non-revoked device of the project owner has read past it (`device.last_seen_change_id`, advanced on each pull).
+
+A device that has never synced has cursor 0 and therefore blocks purging entirely — correct, since it has seen nothing. Revoked devices are ignored, or an abandoned laptop would preserve history forever.
+
+**When a cursor falls behind the purge point, the client is told to resync** (`PullResponse.resyncRequired`) and must rebuild from `GET /binder` plus documents. Two details make that safe:
+
+- The comparison is **strictly** below `change_log_purged_below`. A cursor sitting exactly at the purge point has seen everything removed.
+- The returned `latestId` is never below the purge point, **even when the feed is now empty**. Resuming at 0 would put the client straight back into a resync — an infinite loop.
+
+**Server exports are never deleted.** Only files inside the staging directory are removed, checked by resolved path. A `server` export is the author's own manuscript sitting in the operator's mount, and deleting it would be unforgivable.
+
 ## Search
 
 `GET /projects/{id}/search?q=…` searches titles, synopses, body text and notes across a project.
