@@ -46,18 +46,18 @@ point around code already merged here is the expensive path.
 
 ## Export stack — no Pandoc
 
-Pandoc is GPL and cannot ship inside a proprietary Pro module. It was also never necessary: Pandoc solves an N×M format matrix, and this is 1×5 from a clean structured source. Everything is serialization, not parsing.
+Pandoc is GPL and cannot ship inside a proprietary module. It was also never necessary: Pandoc solves an N×M format matrix, and this is 1×5 from a clean structured source. Everything is serialization, not parsing.
 
-| Format | Implementation | Edition |
-|---|---|---|
+| Format | Implementation |
+|---|---|
 | HTML | `prosemirror-model` `DOMSerializer` |
 | MD / TXT | `prosemirror-markdown` |
-| DOCX | `docx` npm (MIT) |
+| DOCX | `docx` npm (MIT) — write the node→docx mapping, not raw OOXML |
 | PDF | Generate Typst markup, shell to `typst compile` (Apache-2.0) |
 | RTF | In-house serializer — plain-text control words |
-| EPUB | `jszip` (MIT) over the core HTML serializer |
+| EPUB | `jszip` (MIT) over the Core HTML serializer |
 
-Every format derives from the HTML serializer, which is why it lives in core even though most outputs are paid.
+Which formats are free and which are commercial is recorded in `PAID-FEATURES.local.md`, not here. Every format derives from the HTML serializer, which is why that serializer lives in Core regardless.
 
 Format-specific traps worth knowing before you debug them:
 
@@ -65,7 +65,7 @@ Format-specific traps worth knowing before you debug them:
 - **EPUB** — `mimetype` must be the *first* zip entry and *stored uncompressed*. Content must be well-formed XHTML, not HTML5. Validate against EPUBCheck in CI.
 - **PDF** — do not hand-roll with `pdf-lib`. Typst exists because pagination, widow/orphan control, and hyphenation are genuinely hard; keep them there.
 
-Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is incompatible with Pro distribution.
+Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is incompatible with commercial distribution.
 
 ## Data store
 
@@ -86,7 +86,7 @@ Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is inc
 
 Sync trigger is client-side: a connectivity monitor starts a 15-minute timer on regaining a connection and only fires if it holds for the full window (resets on drop). Manual "sync now" always overrides.
 
-## Sharing and authorization (Pro)
+## Sharing and authorization
 
 Membership is a table, not a column. `project.owner_id` stays only as a denormalized fast path.
 
@@ -98,7 +98,7 @@ project_invitation  (id, project_id, email, role, scope_binder_item_id?,
 
 Roles: `owner | editor | commenter | viewer`. A null `scope_binder_item_id` grants the whole project; otherwise the grant covers exactly one binder subtree — a beta reader sees "Act II" and nothing else. Guest access is an emailed invitation redeemed by magic link, minting a lightweight `is_guest` user; the membership row is the same shape.
 
-These tables live in **core** migrations even though the feature is Pro — schema stays unified so a license upgrade needs no migration, and core simply never writes to them.
+These tables live in **Core** migrations even though no Core code writes to them, so that schema stays unified and a licence upgrade never requires a migration.
 
 **The easiest thing to get wrong:** `GET /sync` must filter `change_log` rows against the caller's scope and role. Deletions must stay observable to scoped clients without leaking titles or the existence of out-of-scope siblings. Every entity type added to `change_log` needs its visibility rule written at the same time.
 
@@ -177,6 +177,6 @@ When changing any of this, run the mutation check: delete the `tx_id` predicate 
 ## Open questions
 
 1. Compile job dispatch between Spring and the worker — Postgres `LISTEN/NOTIFY` on a `compile_job` table avoids adding a broker, but is unproven here.
-2. License key issuance and verification for Pro — signing scheme, offline grace period, and what a self-hoster's expired key degrades to.
+2. Licence key issuance and verification — signing scheme, offline grace period, and what a self-hoster's expired key degrades to.
 3. iOS local store details: GRDB schema parity, background sync scheduling.
 4. Comments/annotations as a first-class entity — the `commenter` role currently has nothing to write to.

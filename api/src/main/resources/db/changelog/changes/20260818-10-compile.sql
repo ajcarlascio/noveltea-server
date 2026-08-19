@@ -1,10 +1,10 @@
 --liquibase formatted sql
 
 --changeset anthony:20260818-10-01-compile-preset
---comment: format list per A8. ***REDACTED***
---comment: (A7). The constraint permits all eight because a Core install must still
---comment: be able to store and sync a preset created on a Pro install; enforcement
---comment: of what may actually be *run* is the ExportProvider's job, not the schema's.
+--comment: format list per A8. The constraint permits all eight regardless of edition,
+--comment: because a Core install must still be able to store and sync a preset created
+--comment: elsewhere; enforcing what may actually be *run* is the ExportProvider's job,
+--comment: not the schema's.
 CREATE TABLE compile_preset (
     id                    uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id            uuid        NOT NULL REFERENCES project(id) ON DELETE CASCADE,
