@@ -2,7 +2,12 @@ package com.noveltea.sync;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.noveltea.config.LimitProperties;
+import com.noveltea.model.ChangeOp;
+import com.noveltea.model.EntityType;
 import com.noveltea.order.FractionalIndex;
+import com.noveltea.sync.entity.EntityValidationException;
+import com.noveltea.sync.entity.SyncEntityWriter;
 import com.noveltea.sync.dto.SyncDtos.AppliedChange;
 import com.noveltea.sync.dto.SyncDtos.ChangeRecord;
 import com.noveltea.sync.dto.SyncDtos.ChangeRequest;
@@ -35,32 +40,23 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Service
 public class SyncService {
 
-    /** Entity types the push path can write. See {@link ConflictReason#NOT_IMPLEMENTED}. */
-    private static final Set<String> WRITABLE = Set.of("binder_item", "document");
-
-    /** entity_type -> table. Fixed map; never interpolate a caller-supplied name. */
-    private static final Map<String, String> TABLES = Map.of(
-            "binder_item", "binder_item",
-            "document", "document",
-            "taxonomy", "taxonomy",
-            "custom_metadata_field", "custom_metadata_field",
-            "custom_metadata_value", "custom_metadata_value",
-            "collection", "collection",
-            "collection_item", "collection_item",
-            "compile_preset", "compile_preset");
-
-    private static final Set<String> VALID_OPS = Set.of("create", "update", "delete");
-
-    private static final int MAX_LIMIT = 500;
-
     private final JdbcClient jdbc;
     private final TransactionTemplate tx;
     private final ObjectMapper mapper;
+    private final SyncEntityWriter entities;
+    private final LimitProperties limits;
 
-    public SyncService(JdbcClient jdbc, TransactionTemplate tx, ObjectMapper mapper) {
+    public SyncService(
+            JdbcClient jdbc,
+            TransactionTemplate tx,
+            ObjectMapper mapper,
+            SyncEntityWriter entities,
+            LimitProperties limits) {
         this.jdbc = jdbc;
         this.tx = tx;
         this.mapper = mapper;
+        this.entities = entities;
+        this.limits = limits;
     }
 
     // ---------------------------------------------------------------- pull
@@ -75,7 +71,7 @@ public class SyncService {
      */
     public PullResponse pull(UUID projectId, long since, int limit) {
         Objects.requireNonNull(projectId, "projectId");
-        int capped = Math.min(Math.max(limit, 1), MAX_LIMIT);
+        int capped = Math.min(Math.max(limit, 1), limits.maxSyncPageSize());
 
         List<Map<String, Object>> rows = jdbc.sql("""
                 SELECT id, entity_type, entity_id, op, device_id, created_at
@@ -137,10 +133,11 @@ public class SyncService {
      * jsonb and uuid arrays — arrives correctly typed without per-column translation.
      */
     private Map<UUID, JsonNode> loadEntities(String entityType, List<UUID> ids) {
-        if (entityType == null || ids == null || ids.isEmpty()) {
+        if (ids == null || ids.isEmpty()) {
             return Map.of();
         }
-        String table = TABLES.get(entityType);
+        // Table names come from the enum, never from the request.
+        String table = EntityType.fromWire(entityType).map(EntityType::table).orElse(null);
         if (table == null) {
             return Map.of();
         }
@@ -203,31 +200,96 @@ public class SyncService {
             List<AppliedChange> applied,
             List<ConflictRecord> conflicts) {
 
-        // Guard before any lookup: Set.of(...).contains(null) and Map.of(...).get(null)
-        // both throw NullPointerException, so an absent field in the request body would
-        // otherwise fail the whole batch with a 500 instead of one reported conflict.
-        if (change == null
-                || change.entityType() == null
-                || change.entityId() == null
-                || change.op() == null
-                || !VALID_OPS.contains(change.op())) {
+        // Parse before any lookup. Enum parsing rejects absent and unknown values in one
+        // step, so a malformed change is one reported conflict rather than a 500 that
+        // fails the whole batch.
+        if (change == null || change.entityId() == null) {
             conflicts.add(new ConflictRecord(
                     change == null ? null : change.entityId(),
                     change == null ? null : change.entityType(),
-                    ConflictReason.INVALID_REQUEST, null, null));
+                    ConflictReason.INVALID_REQUEST, null, null, "entityId is required"));
             return;
         }
 
-        if (!WRITABLE.contains(change.entityType())) {
+        EntityType entityType = EntityType.fromWire(change.entityType()).orElse(null);
+        ChangeOp op = ChangeOp.fromWire(change.op()).orElse(null);
+        if (entityType == null || op == null) {
             conflicts.add(new ConflictRecord(
-                    change.entityId(), change.entityType(), ConflictReason.NOT_IMPLEMENTED, null, null));
+                    change.entityId(), change.entityType(), ConflictReason.INVALID_REQUEST, null, null,
+                    entityType == null
+                            ? "unknown entityType: " + change.entityType()
+                            : "unknown op: " + change.op()));
             return;
         }
 
-        switch (change.entityType()) {
-            case "document" -> applyDocument(projectId, deviceId, change, applied, conflicts);
-            case "binder_item" -> applyBinderItem(projectId, deviceId, change, applied, conflicts);
-            default -> throw new IllegalStateException("unreachable: " + change.entityType());
+        switch (entityType) {
+            case DOCUMENT -> applyDocument(projectId, deviceId, change, applied, conflicts);
+            case BINDER_ITEM -> applyBinderItem(projectId, deviceId, change, applied, conflicts);
+            default -> applyDataEntity(projectId, deviceId, entityType, op, change, applied, conflicts);
+        }
+    }
+
+    /**
+     * Taxonomy, metadata, collections and presets: pure data, no conflict copies.
+     *
+     * <p>These use last-write-wins on a version check, like tree structure. Losing a label
+     * rename is recoverable in seconds; only document prose justifies a conflict copy.
+     * Validation happens before any statement is built, so a change that would violate a
+     * CHECK constraint is reported rather than raised.
+     */
+    private void applyDataEntity(
+            UUID projectId,
+            UUID deviceId,
+            EntityType entityType,
+            ChangeOp op,
+            ChangeRequest change,
+            List<AppliedChange> applied,
+            List<ConflictRecord> conflicts) {
+
+        if (!entities.supports(entityType)) {
+            conflicts.add(new ConflictRecord(
+                    change.entityId(), entityType.wire(), ConflictReason.NOT_IMPLEMENTED, null, null, null));
+            return;
+        }
+
+        Optional<Long> current = entities.currentVersion(entityType, change.entityId());
+
+        try {
+            switch (op) {
+                case DELETE -> {
+                    // Idempotent: deleting something already gone is success.
+                    if (current.isPresent()) {
+                        entities.delete(entityType, change.entityId(), deviceId);
+                    }
+                    applied.add(new AppliedChange(change.entityId(), entityType.wire(), current.orElse(0L)));
+                }
+                case CREATE -> {
+                    if (current.isPresent()) {
+                        // Re-delivery of a create whose response was lost: accept quietly.
+                        applied.add(new AppliedChange(change.entityId(), entityType.wire(), current.get()));
+                        return;
+                    }
+                    long version = entities.create(
+                            projectId, deviceId, entityType, change.entityId(), change.data());
+                    recordChange(projectId, entityType.wire(), change.entityId(), "create", deviceId);
+                    applied.add(new AppliedChange(change.entityId(), entityType.wire(), version));
+                }
+                case UPDATE -> {
+                    if (current.isEmpty()) {
+                        conflicts.add(new ConflictRecord(change.entityId(), entityType.wire(),
+                                ConflictReason.ENTITY_MISSING, null, null, null));
+                        return;
+                    }
+                    long version = entities.update(projectId, deviceId, entityType, change.entityId(),
+                            current.get(), change.data());
+                    recordChange(projectId, entityType.wire(), change.entityId(), "update", deviceId);
+                    applied.add(new AppliedChange(change.entityId(), entityType.wire(), version));
+                }
+            }
+        } catch (EntityValidationException e) {
+            // Malformed input never reaches the database, and never fails its neighbours.
+            conflicts.add(new ConflictRecord(change.entityId(), entityType.wire(),
+                    ConflictReason.INVALID_REQUEST, null, null, e.getMessage()));
         }
     }
 

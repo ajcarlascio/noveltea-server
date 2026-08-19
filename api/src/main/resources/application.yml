@@ -40,3 +40,12 @@ noveltea:
     access-token-ttl: 15m
     refresh-token-ttl: 60d
     pairing-code-ttl: 10m
+
+  limits:
+    # Overridable per environment. Services read these rather than hard-coding bounds.
+    sync-page-size: 200
+    max-sync-page-size: 500
+    max-push-batch-size: 500
+    max-title-length: 500
+    max-name-length: 200
+    max-document-bytes: 8388608

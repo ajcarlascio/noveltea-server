@@ -15,7 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * non-web entry point too.
  */
 @Configuration
-@EnableConfigurationProperties(AuthProperties.class)
+@EnableConfigurationProperties({AuthProperties.class, LimitProperties.class})
 public class AuthConfig {
 
     @Bean

@@ -38,7 +38,18 @@ public final class SyncDtos {
      *     needs manual reconciliation; null means nothing was at risk.
      */
     public record ConflictRecord(
-            UUID entityId, String entityType, String reason, UUID conflictCopyId, Long serverVersion) {}
+            UUID entityId,
+            String entityType,
+            String reason,
+            UUID conflictCopyId,
+            Long serverVersion,
+            String detail) {
+
+        public ConflictRecord(
+                UUID entityId, String entityType, String reason, UUID conflictCopyId, Long serverVersion) {
+            this(entityId, entityType, reason, conflictCopyId, serverVersion, null);
+        }
+    }
 
     public record PushResponse(
             List<AppliedChange> applied, List<ConflictRecord> conflicts, long latestId) {}
