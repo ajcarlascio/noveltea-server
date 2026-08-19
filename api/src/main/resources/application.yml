@@ -88,3 +88,10 @@ noveltea:
     # The one action taken in a bad moment that cannot be undone, so the window is wide.
     deletion-grace: 14d
     password-reset-ttl: 1h
+
+  mail:
+    # Many providers reject mail whose From is not an address they host.
+    from: ${NOVELTEA_MAIL_FROM:noveltea@localhost}
+    # Base URL of the browser client, used to build links people click. Without it a
+    # reset email can only carry a bare token.
+    app-url: ${NOVELTEA_APP_URL:}

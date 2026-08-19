@@ -64,3 +64,7 @@ noveltea:
   account:
     deletion-grace: 14d
     password-reset-ttl: 1h
+
+  mail:
+    from: noveltea@test.local
+    app-url: https://app.test.local
