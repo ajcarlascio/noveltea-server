@@ -1,7 +1,14 @@
-# Local development database only. Not a deployment artifact.
+# Local development database. Not a deployment artifact.
+#
+# There is nothing here for SQLite by design: SQLite is an embedded library linked
+# into each client (GRDB on iOS, wa-sqlite/OPFS on web, the bundled driver in Tauri).
+# It is a file, not a service — there is no process to run and nothing to connect to.
+# The client schema lives in packages/client-db and is exercised by `npm test`.
 services:
   postgres:
-    image: postgres:16-alpine
+    # Matches the version developers run locally. The schema requires 15+ for
+    # NULLS NOT DISTINCT and 13+ for xid8 / pg_current_xact_id.
+    image: postgres:18-alpine
     container_name: noveltea-postgres
     environment:
       POSTGRES_DB: noveltea
@@ -16,6 +23,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    # Tests use an isolated `noveltea_test` schema inside this same database, so no
+    # second service is needed. Override with NOVELTEA_TEST_JDBC_URL in CI.
 
 volumes:
   noveltea-pgdata:
