@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { fromNodeSqlite } from "../src/adapters/node-sqlite.ts";
 import { runMigrations, appliedVersions, targetVersion } from "../src/migrate.ts";
+import { MIGRATIONS } from "../src/generated/migrations.ts";
 
 const NOW = "2026-08-18T18:00:00Z";
 
@@ -38,9 +39,16 @@ describe("migrations", () => {
     const raw = new DatabaseSync(":memory:");
     const db = fromNodeSqlite(raw);
     const applied = runMigrations(db);
-    assert.deepEqual(applied, [1, 2, 3]);
-    assert.deepEqual(appliedVersions(db), [1, 2, 3]);
-    assert.equal(targetVersion(), 3);
+    const shipped = MIGRATIONS.map((m) => m.version);
+
+    assert.deepEqual(applied, shipped, "a fresh database applies every shipped migration");
+    assert.deepEqual(appliedVersions(db), shipped);
+    assert.equal(targetVersion(), Math.max(...shipped));
+    assert.deepEqual(
+      shipped,
+      shipped.map((_, i) => i + 1),
+      "versions must be contiguous from 1",
+    );
   });
 
   test("are idempotent", () => {
