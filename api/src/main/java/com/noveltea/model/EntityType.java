@@ -11,7 +11,14 @@ public enum EntityType {
     CUSTOM_METADATA_VALUE("custom_metadata_value", "custom_metadata_value"),
     COLLECTION("collection", "collection"),
     COLLECTION_ITEM("collection_item", "collection_item"),
-    COMPILE_PRESET("compile_preset", "compile_preset");
+    COMPILE_PRESET("compile_preset", "compile_preset"),
+    /**
+     * Sharing is a commercial feature, but Core must still be able to READ these rows
+     * from the change feed — a client syncing a shared project receives them. Core has no
+     * writer for it, so a push reports not_implemented rather than crashing on an
+     * unrecognised type.
+     */
+    PROJECT_MEMBER("project_member", "project_member");
 
     private final String wire;
     private final String table;
