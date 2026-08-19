@@ -1,6 +1,7 @@
 package com.noveltea.config;
 
 import com.noveltea.auth.AuthProperties;
+import com.noveltea.compile.CompileProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,7 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  * non-web entry point too.
  */
 @Configuration
-@EnableConfigurationProperties({AuthProperties.class, LimitProperties.class})
+@EnableConfigurationProperties({AuthProperties.class, LimitProperties.class, CompileProperties.class})
 public class AuthConfig {
 
     @Bean

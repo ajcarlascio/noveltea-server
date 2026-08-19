@@ -13,6 +13,38 @@ export function escapeHtml(value: string): string {
   return value.replace(/[&<>"]/g, (character) => ESCAPES[character]);
 }
 
+/**
+ * Schemes a link may use.
+ *
+ * <p>An allowlist, not a blocklist: `javascript:` is the obvious attack, but `data:`,
+ * `vbscript:` and `file:` are all exploitable in one renderer or another, and the next one
+ * has not been invented yet. Anything not named here loses its link and keeps its text.
+ */
+const SAFE_SCHEMES = ["http:", "https:", "mailto:"];
+
+/**
+ * Decides whether an href can be emitted.
+ *
+ * <p>Normalises first, because `JaVaScRiPt:`, a leading space and an embedded tab or
+ * newline all reach the same place in a browser. Relative paths and fragments carry no
+ * scheme and are safe.
+ */
+export function isSafeHref(href: string): boolean {
+  const normalised = href
+    // Control characters and whitespace are ignored by URL parsers but defeat naive checks.
+    .replace(/[\u0000-\u0020\u007f-\u009f]/g, "")
+    .toLowerCase();
+
+  if (normalised === "") return false;
+  if (normalised.startsWith("#") || normalised.startsWith("/") || normalised.startsWith("./")
+      || normalised.startsWith("../")) {
+    return true;
+  }
+  const scheme = normalised.match(/^([a-z][a-z0-9+.-]*:)/);
+  if (!scheme) return true; // no scheme at all: a relative reference
+  return SAFE_SCHEMES.includes(scheme[1]);
+}
+
 const MARK_TAGS: Record<string, string> = {
   strong: "strong",
   em: "em",
@@ -33,13 +65,19 @@ export function toHtml(doc: ProseMirrorNode | null | undefined): {
   warnings: CompileWarning[];
 } {
   const { warnings } = inspect(doc);
+  const unsafeLinks: string[] = [];
 
   const renderText = (node: ProseMirrorNode): string => {
     let html = escapeHtml(node.text ?? "");
     for (const mark of node.marks ?? []) {
       if (mark.type === "link") {
-        const href = escapeHtml(String(mark.attrs?.href ?? ""));
-        html = `<a href="${href}">${html}</a>`;
+        const raw = String(mark.attrs?.href ?? "");
+        if (isSafeHref(raw)) {
+          html = `<a href="${escapeHtml(raw)}">${html}</a>`;
+        } else {
+          // Keep the author's words, drop the link. Reported by inspect().
+          unsafeLinks.push(raw);
+        }
       } else if (KNOWN_MARKS.has(mark.type) && MARK_TAGS[mark.type]) {
         const tag = MARK_TAGS[mark.type];
         html = `<${tag}>${html}</${tag}>`;
@@ -85,5 +123,14 @@ export function toHtml(doc: ProseMirrorNode | null | undefined): {
     }
   };
 
-  return { output: render(doc ?? undefined), warnings };
+  const output = render(doc ?? undefined);
+  if (unsafeLinks.length > 0) {
+    warnings.push({
+      code: "unsafe_link",
+      message:
+        `${unsafeLinks.length} link${unsafeLinks.length === 1 ? "" : "s"} used a scheme that is not `
+        + "safe to publish and were removed; the text they covered was kept",
+    });
+  }
+  return { output, warnings };
 }

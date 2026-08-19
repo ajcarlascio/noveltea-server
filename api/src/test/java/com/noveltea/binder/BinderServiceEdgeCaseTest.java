@@ -25,6 +25,17 @@ class BinderServiceEdgeCaseTest extends AbstractPostgresTest {
                 .param("id", id).query(UUID.class).optional().orElse(null);
     }
 
+    private java.util.List<String> childTitlesInOrder(UUID parent) {
+        return jdbc.sql("""
+                SELECT title FROM binder_item
+                 WHERE project_id = :p AND parent_id IS NOT DISTINCT FROM CAST(:parent AS uuid)
+                   AND deleted_at IS NULL
+                 ORDER BY order_key
+                """)
+                .param("p", projectId).param("parent", parent)
+                .query(String.class).list();
+    }
+
     private UUID trashId() {
         return jdbc.sql("SELECT id FROM binder_item WHERE project_id = :p AND type = 'trash'")
                 .param("p", projectId).query(UUID.class).single();
@@ -172,5 +183,49 @@ class BinderServiceEdgeCaseTest extends AbstractPostgresTest {
         assertThat(binder.tree(projectId).stream().map(BinderNode::title))
                 .doesNotContain("Trashed")
                 .contains("Kept");
+    }
+
+    @Test
+    @DisplayName("a new item is added at the END of its parent, not the top")
+    void newItemsAppend() {
+        folder("one", null, null);
+        folder("two", null, null);
+        folder("three", null, null);
+
+        assertThat(childTitlesInOrder(null))
+                .as("an author adding chapter three does not expect it above chapter one")
+                .containsExactly("one", "two", "three");
+    }
+
+    @Test
+    @DisplayName("appending works inside a folder too")
+    void newChildrenAppendWithinAFolder() {
+        UUID act = folder("Act", null, null);
+        binder.create(projectId, deviceA, act, "document", "first", null);
+        binder.create(projectId, deviceA, act, "document", "second", null);
+
+        assertThat(childTitlesInOrder(act)).containsExactly("first", "second");
+    }
+
+    @Test
+    @DisplayName("an explicit sibling still positions precisely")
+    void explicitSiblingStillWins() {
+        UUID one = folder("one", null, null);
+        folder("three", null, null);
+        binder.create(projectId, deviceA, null, "folder", "two", one);
+
+        assertThat(childTitlesInOrder(null)).containsExactly("one", "two", "three");
+    }
+
+    @Test
+    @DisplayName("moving with no sibling still means 'to the top'")
+    void moveToTopIsStillPossible() {
+        folder("one", null, null);
+        folder("two", null, null);
+        UUID three = folder("three", null, null);
+
+        binder.move(three, null, null, deviceA);
+
+        assertThat(childTitlesInOrder(null)).containsExactly("three", "one", "two");
     }
 }

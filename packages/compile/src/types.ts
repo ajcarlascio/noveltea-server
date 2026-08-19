@@ -29,7 +29,8 @@ export type WarningCode =
   | "excluded_trashed"
   | "notes_not_exported"
   | "unsupported_node"
-  | "unsupported_mark";
+  | "unsupported_mark"
+  | "unsafe_link";
 
 /**
  * Something the author should know before or after a compile.

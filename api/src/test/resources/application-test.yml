@@ -37,3 +37,8 @@ noveltea:
     max-title-length: 500
     max-name-length: 200
     max-document-bytes: 8388608
+
+  compile:
+    storage-path: ${java.io.tmpdir:/tmp}/noveltea-test-exports
+    staging-path: ${java.io.tmpdir:/tmp}/noveltea-test-staging
+    download-ttl: 1h

@@ -49,3 +49,12 @@ noveltea:
     max-title-length: 500
     max-name-length: 200
     max-document-bytes: 8388608
+
+  compile:
+    # `server` exports land here. In Docker, mount a volume at this path — it is the
+    # author's own storage and nothing purges it.
+    storage-path: ${NOVELTEA_EXPORT_PATH:/var/lib/noveltea/exports}
+    # `download` exports wait here until collected, then are purged. Safe to make
+    # container-local scratch space.
+    staging-path: ${NOVELTEA_STAGING_PATH:/var/lib/noveltea/staging}
+    download-ttl: 1h

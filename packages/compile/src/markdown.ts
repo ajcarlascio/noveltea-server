@@ -1,3 +1,4 @@
+import { isSafeHref } from "./html.ts";
 import { inspect } from "./text.ts";
 import type { CompileWarning, ProseMirrorNode } from "./types.ts";
 
@@ -39,7 +40,12 @@ export function toMarkdown(doc: ProseMirrorNode | null | undefined): {
         case "em": text = `*${text}*`; break;
         case "code": text = `\`${node.text ?? ""}\``; break;
         case "strike": text = `~~${text}~~`; break;
-        case "link": text = `[${text}](${String(mark.attrs?.href ?? "")})`; break;
+        case "link": {
+          // Markdown links execute in renderers too; same allowlist applies.
+          const href = String(mark.attrs?.href ?? "");
+          if (isSafeHref(href)) text = `[${text}](${href})`;
+          break;
+        }
         default: break;
       }
     }

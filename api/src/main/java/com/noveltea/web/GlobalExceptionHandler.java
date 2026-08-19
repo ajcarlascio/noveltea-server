@@ -4,6 +4,8 @@ import com.noveltea.auth.AuthExceptions.AccessDenied;
 import com.noveltea.auth.AuthExceptions.EmailAlreadyRegistered;
 import com.noveltea.auth.AuthExceptions.InvalidCredentials;
 import com.noveltea.binder.BinderExceptions.BinderCycle;
+import com.noveltea.compile.CompileExceptions.ArtifactUnavailable;
+import com.noveltea.compile.CompileExceptions.UnavailableInThisEdition;
 import com.noveltea.binder.BinderExceptions.BinderItemNotFound;
 import com.noveltea.binder.BinderExceptions.CrossProjectMove;
 import com.noveltea.merge.MergeExceptions.NotAConflictCopy;
@@ -64,6 +66,26 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> springAccessDenied(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiError.of("forbidden", "forbidden", request.getRequestURI()));
+    }
+
+    // -------------------------------------------------------------- compile
+
+    /**
+     * 501, matching the convention for anything a commercial module would provide. The
+     * client can show it as an upgrade rather than as a failure.
+     */
+    @ExceptionHandler(UnavailableInThisEdition.class)
+    public ResponseEntity<ApiError> unavailableEdition(
+            UnavailableInThisEdition e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
+                .body(ApiError.of("unavailable_in_this_edition", e.getMessage(), request.getRequestURI()));
+    }
+
+    /** The file is gone or was never produced. Not an error the caller can fix by retrying. */
+    @ExceptionHandler(ArtifactUnavailable.class)
+    public ResponseEntity<ApiError> artifactGone(ArtifactUnavailable e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.GONE)
+                .body(ApiError.of("artifact_unavailable", e.getMessage(), request.getRequestURI()));
     }
 
     // --------------------------------------------------------------- domain

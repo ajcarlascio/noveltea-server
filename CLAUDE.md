@@ -8,7 +8,7 @@ Greenfield — nothing is scaffolded yet. The design of record is `docs/design/v
 
 ## What this is
 
-NovelTea is a self-hosted, offline-first long-form writing app, Scrivener-shaped: a binder tree, document snapshots, labels/statuses, custom metadata, saved/smart collections, and compile presets. Clients are web, Tauri (Windows/macOS), and iOS. Every client keeps a full local replica and works fully disconnected.
+NovelTea is a self-hosted, offline-first long-form writing app built around a binder tree, document snapshots, labels and statuses, custom metadata, saved and smart collections, and compile presets. Clients are web, Tauri (Windows/macOS), and iOS. Every client keeps a full local replica and works fully disconnected.
 
 Copyright Anthony Carlascio. This repo is the **open core** under Elastic License 2.0; commercial features live in a separate private repo (see Editions).
 
@@ -184,6 +184,29 @@ Rules worth keeping:
 
 - **`WireEnumTest`** drives off the enum constants themselves, so a new value is covered the moment it is added: round-tripping, unique lowercase wire forms, case and whitespace tolerance, and empty (never an exception) for null, blank, unknown and injection-shaped input.
 - **`EnumSchemaAlignmentTest`** reads the allowed values out of `pg_constraint` and compares them to the enum, then writes every value to the real table. The enum and the CHECK constraint are two declarations of one fact in different languages; nothing but this keeps them honest. Add a value to one and not the other and it fails, naming the constraint.
+
+## User-generated content is hostile
+
+Document JSON arrives from clients and is stored as-is. Two rules follow:
+
+- **Link hrefs are allowlisted, not escaped.** Escaping does nothing to `javascript:alert(1)` — there is nothing in it to escape. `isSafeHref` permits `http`, `https`, `mailto` and relative references, normalising away case, whitespace and control characters first, and fails closed on anything unlisted. An unsafe link loses its anchor and keeps its text, and the author is warned. This applies to Markdown too: markdown links execute in renderers.
+- **All text is escaped on output**, and a test feeds `<script>` through as author text and asserts it parses back as text rather than an element.
+
+We do not store HTML, so there is nothing to sanitise on write; the exposure is entirely on the way out.
+
+`IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
+
+## Compile pipeline
+
+`POST /projects/{id}/compile` queues a `compile_job` and returns immediately. The Node worker in `worker/` claims it, renders it with `@noveltea/compile`, writes the artifact and records the result. `GET /compile-jobs/{id}` reports status; `/download` streams the file.
+
+- **The author picks a destination per compile.** `download` stages the file briefly and expires it; `server` writes to the operator's mounted path and keeps it; `cloud` is commercial and a Core build answers `501`. `DestinationProvider` is the extension point, shaped like `ExportProvider`.
+- **The worker reads Postgres directly.** It must, because it owns the document schema and the JVM never interprets document structure. It claims with `FOR UPDATE SKIP LOCKED`, so running several workers needs no coordination and a crashed one blocks nobody.
+- **`pg_notify` is sent inside the submitting transaction.** Postgres holds notifications until commit, so the worker cannot wake before the row it is being told about is visible. Polling is a fallback for anything missed, not the primary path.
+- **A failed job backs off** (`next_attempt_at`) rather than being re-claimed on the next pass. Without it a drain spends every retry in milliseconds, which is useless for the transient faults retrying exists for.
+- **Download paths are re-validated against the configured roots** before anything is streamed. A corrupted or tampered `output_path` must not become an arbitrary file read.
+
+Run it with `NOVELTEA_DB_URL`, `NOVELTEA_EXPORT_PATH` and `NOVELTEA_STAGING_PATH`; the API needs the same two paths under `noveltea.compile.*`.
 
 ## Compile
 
