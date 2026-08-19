@@ -67,7 +67,10 @@ public class AuthService {
     public Session login(String email, String password, String deviceName, String platform) {
         requireText(email, "email");
         Map<String, Object> user = jdbc
-                .sql("SELECT id, password_hash, is_guest FROM app_user WHERE email = :email")
+                // deleted_at, not deletion_requested_at: an account with deletion merely
+                // scheduled must still be able to sign in and cancel it.
+                .sql("SELECT id, password_hash, is_guest FROM app_user "
+                        + "WHERE email = :email AND deleted_at IS NULL")
                 .param("email", email == null ? "" : email.trim())
                 .query()
                 .listOfRows()

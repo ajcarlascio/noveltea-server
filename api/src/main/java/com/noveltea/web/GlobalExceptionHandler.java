@@ -1,5 +1,6 @@
 package com.noveltea.web;
 
+import com.noveltea.account.AccountExceptions.NoDeletionPending;
 import com.noveltea.auth.AuthExceptions.AccessDenied;
 import com.noveltea.auth.AuthExceptions.EmailAlreadyRegistered;
 import com.noveltea.auth.AuthExceptions.InvalidCredentials;
@@ -102,7 +103,8 @@ public class GlobalExceptionHandler {
 
     // --------------------------------------------------------------- domain
 
-    @ExceptionHandler({BinderItemNotFound.class, NotAConflictCopy.class, SnapshotNotFound.class})
+    @ExceptionHandler({BinderItemNotFound.class, NotAConflictCopy.class, SnapshotNotFound.class,
+            NoDeletionPending.class})
     public ResponseEntity<ApiError> notFound(RuntimeException e, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("not_found", e.getMessage(), request.getRequestURI()));
