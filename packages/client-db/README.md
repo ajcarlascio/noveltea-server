@@ -32,12 +32,22 @@ All tables are `STRICT`, so column types are actually enforced rather than coerc
 
 **`PRAGMA foreign_keys = ON` is per-connection, not per-database.** SQLite defaults it *off*. Any connection that forgets it silently disables every `ON DELETE CASCADE` in this schema. Call `applyConnectionPragmas(db)` on every connection you open — `runMigrations` does it for you, but only for the connection you hand it.
 
-**`pending_change` coalesces: at most one row per `(entity_type, entity_id)`.** A typing session produces hundreds of saves to one document, and only the final content matters. When re-queueing an entity that is already pending, upsert so that:
+**`pending_change` coalesces: at most one row per `(entity_type, entity_id)`.** A typing session produces hundreds of saves to one document, and only the final content matters — so the queue is a state machine, not a log. Use `enqueueChange()`; do not INSERT into the table directly.
 
-- `payload` is **replaced** with the latest local state, and
-- `base_version` is **preserved** from the original row.
+| pending | + new op | result |
+|---|---|---|
+| — | create / update / delete | that op |
+| `create` | `update` | **`create`** — the server has no row yet, so downgrading to `update` would 404 |
+| `create` | `delete` | **collapses to nothing** (but see below) |
+| `update` | `update` | `update`, latest payload |
+| `update` | `delete` | `delete`, payload cleared |
+| `delete` | `create` / `update` | `update` — resurrected before syncing |
 
-`base_version` is the version this client last successfully synced. Overwriting it with a locally-incremented value makes every push look conflict-free and will silently clobber a concurrent edit from another device. The `UNIQUE` constraint stops you inserting a duplicate; it cannot stop you upserting the wrong `base_version`.
+Two invariants `enqueueChange()` exists to protect:
+
+**`base_version` is never overwritten by a later enqueue.** It records the version this client last successfully synced. Replacing it with a locally-incremented value makes the push look conflict-free and silently clobbers a concurrent edit from another device.
+
+**`create` + `delete` collapses to nothing only when `attempts = 0`.** Once a push has been attempted, the server may have applied it and lost the response on the way back. Dropping the row locally would leave an entity on the server that the user deleted — and the next pull would faithfully send it back down as a ghost. When `attempts > 0` the merge emits a `delete` instead, and the server treats deletion of an unknown id as a no-op. This is why `markAttempted()` must be called *before* pushing, never after.
 
 ## Adding a migration
 
