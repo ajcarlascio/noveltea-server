@@ -42,3 +42,6 @@ Thumbs.db
 # Local Gradle distribution — belongs outside the repo, not in it
 /gradle-*-bin.zip
 /gradle-[0-9]*/
+
+# Generated migration bundle — rebuilt by `npm run generate`
+packages/*/src/generated/
