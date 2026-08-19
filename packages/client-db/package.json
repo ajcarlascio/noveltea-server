@@ -1,0 +1,25 @@
+{
+  "name": "@noveltea/client-db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SQLite schema and migration runner shared by NovelTea's offline clients",
+  "license": "SEE LICENSE IN ../../LICENSE.md",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./migrations/*": "./migrations/*"
+  },
+  "files": [
+    "src",
+    "migrations"
+  ],
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "generate": "node scripts/bundle-migrations.mjs",
+    "pretest": "npm run generate",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "prepare": "npm run generate"
+  }
+}
