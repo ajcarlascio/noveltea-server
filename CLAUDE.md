@@ -178,6 +178,13 @@ Rules worth keeping:
 
 `GlobalExceptionHandler` owns every mapping — controllers must not declare their own `@ExceptionHandler`. Unexpected exceptions are logged with a stack trace and answered with a generic message, because exception text routinely carries SQL, table names and parameter values.
 
+## Model tests
+
+`com.noveltea.model` is covered by two suites that exist for different reasons:
+
+- **`WireEnumTest`** drives off the enum constants themselves, so a new value is covered the moment it is added: round-tripping, unique lowercase wire forms, case and whitespace tolerance, and empty (never an exception) for null, blank, unknown and injection-shaped input.
+- **`EnumSchemaAlignmentTest`** reads the allowed values out of `pg_constraint` and compares them to the enum, then writes every value to the real table. The enum and the CHECK constraint are two declarations of one fact in different languages; nothing but this keeps them honest. Add a value to one and not the other and it fails, naming the constraint.
+
 ## Constants and limits
 
 - **Closed value sets are enums in `com.noveltea.model`**, each with a `wire()` form matching its `text` column and CHECK constraint. Adding a value means editing one enum, not hunting string literals. Do not reintroduce bare string comparisons for entity types, ops, formats, roles or platforms.
@@ -187,11 +194,11 @@ Rules worth keeping:
 
 `SyncEntitySpec` declares taxonomy, custom metadata, collections and compile presets: their columns, types, required fields, parent references and cross-field invariants. `SyncEntityWriter` validates against it before building any statement.
 
-**Every CHECK constraint in the schema must have a matching invariant here.** A constraint that only exists in Postgres surfaces as an exception that fails an entire push; caught in the spec it is one reported conflict with a `detail` the client can act on. When you add a CHECK, add the invariant in the same change.
+**Every CHECK constraint in the schema must have a matching invariant here**, and `SyncEntitySpecGuardTest` enforces it by reading `pg_constraint` at test time. An `Invariant` names the exact constraint it mirrors (`mirrorsConstraint`) — that string is checked, not decorative. Add a CHECK without a counterpart and the build fails with a message telling you which one. A constraint that only exists in Postgres surfaces as an exception that fails an entire push; caught in the spec it is one reported conflict with a `detail` the client can act on. When you add a CHECK, add the invariant in the same change.
 
 Two rules that are easy to get wrong:
 
-- **`parentRefs` are an authorization boundary**, not just referential integrity. Without the same-project check a caller could attach a row to another account's collection. The rejection message is deliberately vague so it cannot confirm the row exists elsewhere.
+- **`parentRefs` are an authorization boundary**, guarded by a test asserting every referenced table has a `project_id` to scope on, not just referential integrity. Without the same-project check a caller could attach a row to another account's collection. The rejection message is deliberately vague so it cannot confirm the row exists elsewhere.
 - **Invariants run against the merged row on update**, never the patch alone. `{"is_smart": true}` looks harmless in isolation and is invalid against a collection with no query.
 
 Documents and binder items are deliberately not spec-driven: conflict copies and tree semantics do not belong in a declarative table.

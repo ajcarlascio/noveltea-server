@@ -37,8 +37,15 @@ public record SyncEntitySpec(
     /** @param table the table the referenced id must exist in, scoped to the project */
     public record ParentRef(String column, String table, boolean requiredOnCreate) {}
 
-    /** @param check returns an error message when violated, or empty when satisfied */
-    public record Invariant(String name, Function<JsonNode, Optional<String>> check) {}
+    /**
+     * A cross-field rule that mirrors a multi-column CHECK constraint.
+     *
+     * @param mirrorsConstraint the exact constraint name in Postgres. This is not
+     *     documentation: a test reads {@code pg_constraint} and fails when a CHECK exists
+     *     with no invariant mirroring it, which is what stops the two drifting apart.
+     * @param check returns an error message when violated, or empty when satisfied
+     */
+    public record Invariant(String mirrorsConstraint, Function<JsonNode, Optional<String>> check) {}
 
     private static final List<SyncEntitySpec> ALL = List.of(
             new SyncEntitySpec(
@@ -50,7 +57,7 @@ public record SyncEntitySpec(
                             required("order_key", TEXT),
                             of("deleted_at", TIMESTAMP)),
                     List.of(),
-                    List.of(new Invariant("color_is_label_only", data -> {
+                    List.of(new Invariant("taxonomy_color_label_only", data -> {
                         // Mirrors CHECK taxonomy_color_label_only.
                         boolean hasColour = has(data, "color");
                         boolean isLabel = "label".equalsIgnoreCase(text(data, "kind"));
@@ -69,7 +76,7 @@ public record SyncEntitySpec(
                             required("order_key", TEXT),
                             of("deleted_at", TIMESTAMP)),
                     List.of(),
-                    List.of(new Invariant("options_are_select_only", data -> {
+                    List.of(new Invariant("custom_metadata_field_options_for_select", data -> {
                         // Mirrors CHECK custom_metadata_field_options_for_select.
                         boolean hasOptions = has(data, "options");
                         boolean isSelect = "select".equalsIgnoreCase(text(data, "field_type"));
@@ -96,7 +103,7 @@ public record SyncEntitySpec(
                             required("order_key", TEXT),
                             of("deleted_at", TIMESTAMP)),
                     List.of(),
-                    List.of(new Invariant("smart_needs_query", data ->
+                    List.of(new Invariant("collection_smart_has_query", data ->
                             // Mirrors CHECK collection_smart_has_query.
                             bool(data, "is_smart") && !has(data, "query")
                                     ? Optional.of("a smart collection requires a query")
@@ -122,7 +129,7 @@ public record SyncEntitySpec(
                             of("front_matter", JSON_OBJECT),
                             of("deleted_at", TIMESTAMP)),
                     List.of(),
-                    List.of(new Invariant("needs_a_selection", data ->
+                    List.of(new Invariant("compile_preset_has_selection", data ->
                             // Mirrors CHECK compile_preset_has_selection.
                             !has(data, "included_binder_items") && !has(data, "include_query")
                                     ? Optional.of("a preset needs included_binder_items or include_query")
