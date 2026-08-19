@@ -8,6 +8,7 @@ import com.noveltea.merge.MergeExceptions.StaleOriginal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -65,6 +66,7 @@ public class MergeService {
 
     /** Unresolved conflict copies in a project, oldest fork first. */
     public List<ConflictSummary> listConflicts(UUID projectId) {
+        Objects.requireNonNull(projectId, "projectId");
         return jdbc.sql("""
                 SELECT copy.id            AS copy_id,
                        orig.id            AS original_id,
@@ -87,6 +89,7 @@ public class MergeService {
     }
 
     public ConflictDetail get(UUID copyId) {
+        Objects.requireNonNull(copyId, "copyId");
         Map<String, Object> row = jdbc.sql("""
                 SELECT copy.id AS copy_id, orig.id AS original_id, orig.title AS original_title,
                        origdoc.content::text AS original_content, origdoc.version AS original_version,
@@ -129,6 +132,10 @@ public class MergeService {
      */
     @Transactional
     public long resolve(UUID copyId, JsonNode mergedContent, long baseVersion, UUID deviceId) {
+        Objects.requireNonNull(copyId, "copyId");
+        if (mergedContent == null || mergedContent.isNull()) {
+            throw new IllegalArgumentException("merged content must not be null — refusing to blank a document");
+        }
         Map<String, Object> copy = jdbc.sql("""
                 SELECT project_id, conflict_of_id FROM binder_item
                  WHERE id = :id AND conflict_of_id IS NOT NULL AND deleted_at IS NULL
