@@ -82,6 +82,7 @@ Status codes: `409` version conflict · `501` unimplemented (provider absent) ·
 - **One logical change per changeset.** Never edit a changeset that has been merged — Liquibase checksums it and deployed databases will fail on startup. Add a new changeset instead.
 - Always write an explicit `rollback`. Postgres DDL is transactional; there is no excuse for an irreversible changeset.
 - SQL-formatted changelogs only. No XML abstraction — it fights `jsonb`, GIN, and partial indexes.
+- **Never change how the changelog is addressed.** `DATABASECHANGELOG.FILENAME` records the path, so the same changeset registered under two paths is two changesets. Gradle and Spring must resolve it identically (`db/changelog/db.changelog-master.yaml` against `src/main/resources`). Symptom of getting it wrong: startup fails with `relation "..." already exists`.
 - **Never apply changesets with a standalone `liquibase` CLI.** Only `./gradlew :api:update` or Spring's startup runner — both resolve the Boot-managed version. A CLI on a different major version writes incompatible checksums into `DATABASECHANGELOG`, after which the application will not start.
 - Changeset id convention: `YYYYMMDD-NN-short-description`.
 - Any index supporting a smart-collection query or manuscript search should be GIN; state which query it serves in a comment.
