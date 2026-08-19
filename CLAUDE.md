@@ -178,6 +178,24 @@ Rules worth keeping:
 
 `GlobalExceptionHandler` owns every mapping — controllers must not declare their own `@ExceptionHandler`. Unexpected exceptions are logged with a stack trace and answered with a generic message, because exception text routinely carries SQL, table names and parameter values.
 
+## Constants and limits
+
+- **Closed value sets are enums in `com.noveltea.model`**, each with a `wire()` form matching its `text` column and CHECK constraint. Adding a value means editing one enum, not hunting string literals. Do not reintroduce bare string comparisons for entity types, ops, formats, roles or platforms.
+- **Numeric bounds live in `LimitProperties`** (`noveltea.limits.*`), not as private static fields. A deployment can change them, and two services cannot disagree about the same bound.
+
+## Synced data entity types
+
+`SyncEntitySpec` declares taxonomy, custom metadata, collections and compile presets: their columns, types, required fields, parent references and cross-field invariants. `SyncEntityWriter` validates against it before building any statement.
+
+**Every CHECK constraint in the schema must have a matching invariant here.** A constraint that only exists in Postgres surfaces as an exception that fails an entire push; caught in the spec it is one reported conflict with a `detail` the client can act on. When you add a CHECK, add the invariant in the same change.
+
+Two rules that are easy to get wrong:
+
+- **`parentRefs` are an authorization boundary**, not just referential integrity. Without the same-project check a caller could attach a row to another account's collection. The rejection message is deliberately vague so it cannot confirm the row exists elsewhere.
+- **Invariants run against the merged row on update**, never the patch alone. `{"is_smart": true}` looks harmless in isolation and is invalid against a collection with no query.
+
+Documents and binder items are deliberately not spec-driven: conflict copies and tree semantics do not belong in a declarative table.
+
 ## Sync endpoint status
 
 `GET|POST /api/v1/projects/{id}/sync` is implemented in `com.noveltea.sync.SyncService`. What is and is not true of it today:
