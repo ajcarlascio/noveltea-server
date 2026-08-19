@@ -151,9 +151,11 @@ class SyncEntitySpecGuardTest extends AbstractPostgresTest {
         // Documents and binder items carry conflict copies and tree semantics that no
         // declarative spec should own. Snapshots are immutable and only sync when manual,
         // which a column spec cannot express. project_member is read-only in Core.
+        // Comments are hand-written because authorship is server-assigned: taking it from
+        // a payload would let a client attribute a remark to someone else.
         List<EntityType> handledElsewhere = List.of(
-                EntityType.DOCUMENT, EntityType.BINDER_ITEM,
-                EntityType.SNAPSHOT, EntityType.PROJECT_MEMBER);
+                EntityType.DOCUMENT, EntityType.BINDER_ITEM, EntityType.SNAPSHOT,
+                EntityType.PROJECT_MEMBER, EntityType.COMMENT);
 
         for (EntityType type : EntityType.values()) {
             boolean spec = SyncEntitySpec.forType(type).isPresent();

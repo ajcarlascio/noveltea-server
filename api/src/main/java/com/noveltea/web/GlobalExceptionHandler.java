@@ -6,6 +6,8 @@ import com.noveltea.auth.AuthExceptions.EmailAlreadyRegistered;
 import com.noveltea.auth.AuthExceptions.InvalidCredentials;
 import com.noveltea.binder.BinderExceptions.BinderCycle;
 import com.noveltea.compile.CompileExceptions.ArtifactUnavailable;
+import com.noveltea.comment.CommentExceptions.CommentNotFound;
+import com.noveltea.comment.CommentExceptions.NotTheAuthor;
 import com.noveltea.compile.CompileExceptions.TooManyPendingCompiles;
 import com.noveltea.compile.CompileExceptions.UnavailableInThisEdition;
 import com.noveltea.binder.BinderExceptions.BinderItemNotFound;
@@ -68,6 +70,13 @@ public class GlobalExceptionHandler {
                         request.getRequestURI()));
     }
 
+    /** 403, not 404: the caller can see the comment, they simply did not write it. */
+    @ExceptionHandler(NotTheAuthor.class)
+    public ResponseEntity<ApiError> notTheAuthor(NotTheAuthor e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiError.of("not_the_author", e.getMessage(), request.getRequestURI()));
+    }
+
     @ExceptionHandler(org.springframework.security.access.AccessDeniedException.class)
     public ResponseEntity<ApiError> springAccessDenied(HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
@@ -104,7 +113,7 @@ public class GlobalExceptionHandler {
     // --------------------------------------------------------------- domain
 
     @ExceptionHandler({BinderItemNotFound.class, NotAConflictCopy.class, SnapshotNotFound.class,
-            NoDeletionPending.class})
+            NoDeletionPending.class, CommentNotFound.class})
     public ResponseEntity<ApiError> notFound(RuntimeException e, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("not_found", e.getMessage(), request.getRequestURI()));

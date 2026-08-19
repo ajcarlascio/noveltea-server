@@ -12,6 +12,9 @@ dependencies {
     // JWT handling would mean hand-writing crypto, which is never the right trade.
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.boot:spring-boot-starter-validation")
+    // Jakarta Mail via Spring's JavaMailSender. No third-party dependency: an operator
+    // points it at whatever SMTP they already run.
+    implementation("org.springframework.boot:spring-boot-starter-mail")
     implementation("org.liquibase:liquibase-core")
     runtimeOnly("org.postgresql:postgresql")
 

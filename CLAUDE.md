@@ -196,6 +196,23 @@ We do not store HTML, so there is nothing to sanitise on write; the exposure is 
 
 `IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
 
+## Comments and mail
+
+Comments are annotations on a document, optionally anchored to a passage, threaded by `parent_comment_id`, and synced like any other entity.
+
+- **An anchor stores the quoted text alongside its offsets.** ProseMirror positions shift with every edit, so orphaning is judged by whether the quoted words are still in the document, not by whether the offsets still line up. A comment whose text has gone is reported **orphaned** — never moved and never deleted. Relocating an editor's note to the wrong sentence is worse than admitting it lost its place.
+- **Authorship is server-assigned**, which is why comments are hand-written in sync rather than spec-driven: taking the author from a payload would let a client attribute a remark to someone else.
+- **Only the author edits or deletes; anyone with write access resolves.** Resolving is a shared editorial act; rewording someone else's note is not.
+- Deletes are soft, so the deletion propagates and threads keep their shape.
+
+**Mail** is one `Mailer` bean chosen at startup: SMTP when `spring.mail.host` is set, otherwise a fallback that logs and says loudly that a reset link in a log file is a credential. Decided at runtime rather than by two `@ConditionalOnMissingBean` beans, which is only dependable inside auto-configuration and produced a bean-definition clash here.
+
+**Notification never fails the action.** A comment is saved whether or not a mail server is reachable, and nobody is mailed about their own comment.
+
+### `email` is `citext`, not `text`
+
+The driver returns it as a `PGobject`, so `(String) row.get("email")` throws. Every read casts in SQL — `u.email::text`. This cost real time: the same cast inside the notifier's swallowed `catch` looked exactly like "notifications silently do not work".
+
 ## Account lifecycle
 
 **Password reset** is two endpoints, both unauthenticated and both rate-limited. `POST /auth/password-reset` always answers 202 whether or not the address exists — a different answer would make it the account-enumeration oracle that login deliberately is not. Only the token hash is stored, requesting a new link invalidates the previous one, and confirming it **signs every device out**: someone resetting a password usually believes it was stolen, and leaving the attacker's paired phone signed in would make the reset theatre.

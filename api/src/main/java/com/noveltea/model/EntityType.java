@@ -23,7 +23,9 @@ public enum EntityType {
      * Only MANUAL snapshots ever appear in the feed. Automatic captures stay on the device
      * that made them — see migration 20260819-19 for why.
      */
-    SNAPSHOT("snapshot", "snapshot");
+    SNAPSHOT("snapshot", "snapshot"),
+    /** Authorship is server-assigned, so comments are written by hand rather than by spec. */
+    COMMENT("comment", "comment");
 
     private final String wire;
     private final String table;

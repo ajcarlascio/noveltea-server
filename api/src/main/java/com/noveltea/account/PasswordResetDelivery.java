@@ -1,36 +1,43 @@
 package com.noveltea.account;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.noveltea.mail.MailProperties;
+import com.noveltea.mail.Mailer;
 import org.springframework.stereotype.Component;
 
 /**
  * How a reset link reaches its owner.
  *
- * <p>Separated from the service that mints tokens so email can arrive later without
- * touching any of this. Until it does, a self-hosted operator can complete a reset by
- * reading the log — which is honest for a single-operator install, and unacceptable for
- * anything multi-tenant. That distinction is why the default implementation says so out
- * loud on every use.
+ * <p>Kept as an interface so a deployment can substitute its own channel, and so tests can
+ * capture the token without a mail server.
  */
 public interface PasswordResetDelivery {
 
     void deliver(String email, String token);
 
-    /**
-     * The fallback when no mail sender is configured. A real implementation replaces it by
-     * being declared {@code @Primary}.
-     */
+    /** Sends through whichever {@link Mailer} is configured — SMTP, or the logging fallback. */
     @Component
-    class LoggingDelivery implements PasswordResetDelivery {
+    class MailDelivery implements PasswordResetDelivery {
 
-        private static final Logger log = LoggerFactory.getLogger(LoggingDelivery.class);
+        private final Mailer mailer;
+        private final MailProperties properties;
+
+        public MailDelivery(Mailer mailer, MailProperties properties) {
+            this.mailer = mailer;
+            this.properties = properties;
+        }
 
         @Override
         public void deliver(String email, String token) {
-            log.warn("No mail sender is configured, so this reset link is only being logged. "
-                    + "Anyone who can read these logs can take over the account. "
-                    + "Reset for {}: token={}", email, token);
+            mailer.send(email, "Reset your NovelTea password", """
+                    Someone asked to reset the password for this address.
+
+                    %s
+
+                    The link works once and expires in an hour. Resetting will sign out every
+                    device on the account.
+
+                    If this was not you, nothing has changed and you can ignore this message.
+                    """.formatted(properties.passwordResetLink(token)));
         }
     }
 }
