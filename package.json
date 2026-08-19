@@ -1,7 +1,7 @@
 {
-  "name": "noveltea",
+  "name": "noveltea-server",
   "private": true,
-  "description": "NovelTea — self-hosted, offline-first long-form writing app",
+  "description": "NovelTea \u2014 self-hosted, offline-first long-form writing app",
   "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "workspaces": [
