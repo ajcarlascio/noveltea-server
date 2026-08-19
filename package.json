@@ -13,5 +13,8 @@
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "generate": "npm run generate --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0"
   }
 }

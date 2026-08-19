@@ -51,9 +51,9 @@ export function runMigrations(
     db.exec("BEGIN;");
     try {
       db.exec(migration.sql);
-      db.exec(
-        `INSERT INTO schema_migration (version, name, applied_at)
-         VALUES (${migration.version}, '${migration.name.replace(/'/g, "''")}', '${new Date().toISOString()}');`,
+      db.run(
+        "INSERT INTO schema_migration (version, name, applied_at) VALUES (?, ?, ?);",
+        [migration.version, migration.name, new Date().toISOString()],
       );
       db.exec("COMMIT;");
     } catch (error) {
