@@ -186,4 +186,22 @@ class WebApiTest extends AbstractPostgresTest {
         assertThat(paired.getResponse().getStatus()).isEqualTo(200);
         assertThat(body(paired).get("userId").asText()).isEqualTo(session.userId().toString());
     }
+
+    @Test
+    @DisplayName("a missing required query parameter is a 400 that names it, not a 500")
+    void missingQueryParameterIsBadRequest() throws Exception {
+        Session session = register();
+        UUID projectId = UUID.randomUUID();
+        jdbc.sql("INSERT INTO project (id, owner_id, title) VALUES (:id, :o, 'Mine')")
+                .param("id", projectId).param("o", session.userId()).update();
+
+        MvcResult result = mvc.perform(get("/api/v1/projects/{id}/search", projectId)
+                        .header("Authorization", "Bearer " + session.accessToken()))
+                .andReturn();
+
+        assertThat(result.getResponse().getStatus())
+                .as("a 500 tells a client to retry something that can never succeed")
+                .isEqualTo(400);
+        assertThat(body(result).get("message").asText()).contains("q");
+    }
 }

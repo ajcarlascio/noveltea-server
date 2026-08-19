@@ -22,6 +22,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -131,6 +133,11 @@ public class GlobalExceptionHandler {
         HttpMessageNotReadableException.class,
         MethodArgumentTypeMismatchException.class,
         MissingRequestHeaderException.class,
+        // A missing or unbindable query parameter is the caller's mistake, not ours.
+        // Without this it reaches the catch-all and reports 500, which tells a client to
+        // retry something that will never succeed.
+        MissingServletRequestParameterException.class,
+        ServletRequestBindingException.class,
         MethodArgumentNotValidException.class
     })
     public ResponseEntity<ApiError> badRequest(Exception e, HttpServletRequest request) {
@@ -162,6 +169,9 @@ public class GlobalExceptionHandler {
     private static String safeMessage(Exception e) {
         if (e instanceof IllegalArgumentException && e.getMessage() != null) {
             return e.getMessage();
+        }
+        if (e instanceof MissingServletRequestParameterException missing) {
+            return "missing required parameter: " + missing.getParameterName();
         }
         return "malformed request";
     }
