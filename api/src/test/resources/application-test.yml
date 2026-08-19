@@ -48,6 +48,11 @@ noveltea:
     # pruned: the author asked for those.
     keep-automatic-per-document: 25
 
+  rate-limit:
+    enabled: false
+  cors:
+    allowed-origins: []
+
   retention:
     # The scheduler is off in tests; the sweep is driven directly.
     enabled: false

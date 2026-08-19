@@ -5,9 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
 import com.noveltea.compile.CompileExceptions.ArtifactUnavailable;
+import com.noveltea.compile.CompileExceptions.TooManyPendingCompiles;
 import com.noveltea.compile.CompileExceptions.UnavailableInThisEdition;
 import com.noveltea.model.CompileDestination;
 import com.noveltea.model.CompileJobStatus;
+import com.noveltea.config.LimitProperties;
 import com.noveltea.model.ExportFormat;
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,6 +19,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +47,7 @@ public class CompileService {
     private final DestinationProvider destinations;
     private final CompileProperties properties;
     private final ObjectMapper mapper;
+    private final LimitProperties limits;
 
     public CompileService(
             JdbcClient jdbc,
@@ -51,7 +55,9 @@ public class CompileService {
             ExportProvider exports,
             DestinationProvider destinations,
             CompileProperties properties,
-            ObjectMapper mapper) {
+            ObjectMapper mapper,
+            LimitProperties limits) {
+        this.limits = limits;
         this.jdbc = jdbc;
         this.access = access;
         this.exports = exports;
@@ -107,6 +113,40 @@ public class CompileService {
         }
         if (request.presetId() == null && request.inlineConfig() == null) {
             throw new IllegalArgumentException("a compile needs a preset_id or an inline config");
+        }
+
+        // An identical export is already waiting: hand back the job that exists rather than
+        // rendering the same manuscript twice. This is what stops a client retrying a slow
+        // request from queueing ten copies of it.
+        Optional<UUID> duplicate = jdbc.sql("""
+                SELECT id FROM compile_job
+                 WHERE project_id = :projectId AND format = :format AND destination = :destination
+                   AND status IN ('queued', 'running')
+                   AND preset_id IS NOT DISTINCT FROM CAST(:presetId AS uuid)
+                 ORDER BY created_at LIMIT 1
+                """)
+                .param("projectId", projectId)
+                .param("format", format.wire())
+                .param("destination", destination.wire())
+                .param("presetId", request.presetId())
+                .query(UUID.class)
+                .optional();
+        if (duplicate.isPresent()) {
+            return duplicate.get();
+        }
+
+        // Bounded by how many are WAITING, not by how often they are requested. An author
+        // tuning a preset exports repeatedly and legitimately; each finished job frees its
+        // slot immediately, so that workflow never meets this limit.
+        long pending = jdbc.sql("""
+                SELECT count(*) FROM compile_job
+                 WHERE requested_by_user_id = :userId AND status IN ('queued', 'running')
+                """)
+                .param("userId", user.userId())
+                .query(Long.class)
+                .single();
+        if (pending >= limits.maxPendingCompilesPerUser()) {
+            throw new TooManyPendingCompiles(limits.maxPendingCompilesPerUser());
         }
 
         UUID jobId = UUID.randomUUID();

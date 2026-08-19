@@ -115,6 +115,7 @@ public class SyncService {
                 .listOfRows();
 
         boolean hasMore = rows.size() > capped;
+
         if (hasMore) {
             rows = rows.subList(0, capped);
         }
@@ -133,11 +134,23 @@ public class SyncService {
 
         List<ChangeRecord> changes = new ArrayList<>(rows.size());
         long latest = since;
+        long bytesSoFar = 0;
         for (Map<String, Object> row : rows) {
             long id = ((Number) row.get("id")).longValue();
             String type = (String) row.get("entity_type");
             UUID entityId = (UUID) row.get("entity_id");
             JsonNode data = hydrated.getOrDefault(type, Map.of()).get(entityId);
+            // Stop on bytes as well as rows. 500 rows of full documents has no predictable
+            // size, and a client on mobile data has no way to refuse a page already sent.
+            // Always emit at least one row, or a single oversized document would wedge the
+            // feed permanently.
+            long rowBytes = data == null ? 0 : data.toString().length();
+            if (!changes.isEmpty() && bytesSoFar + rowBytes > limits.maxSyncPageBytes()) {
+                hasMore = true;
+                break;
+            }
+            bytesSoFar += rowBytes;
+
             changes.add(new ChangeRecord(
                     id,
                     type,

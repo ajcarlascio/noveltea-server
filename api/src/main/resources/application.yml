@@ -64,6 +64,19 @@ noveltea:
     # pruned: the author asked for those.
     keep-automatic-per-document: 25
 
+  rate-limit:
+    # Credential endpoints only. Sync is deliberately untouched: a client catching up
+    # makes hundreds of requests in seconds, and throttling that breaks first sync.
+    enabled: true
+    login-attempts-per-window: 10
+    registrations-per-window: 5
+    pairing-attempts-per-window: 10
+    window: 5m
+  cors:
+    # A browser client on another origin must be listed here. Empty means same-origin only.
+    #   allowed-origins: ["https://app.example.com"]
+    allowed-origins: []
+
   retention:
     # A device offline longer than change-log-retention must resync from scratch.
     change-log-retention: 90d

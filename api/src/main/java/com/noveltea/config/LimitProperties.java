@@ -16,7 +16,10 @@ public record LimitProperties(
         Integer maxPushBatchSize,
         Integer maxTitleLength,
         Integer maxNameLength,
-        Integer maxDocumentBytes) {
+        Integer maxDocumentBytes,
+        Integer maxPendingCompilesPerUser,
+        Integer maxSyncPageBytes,
+        Integer maxRequestBytes) {
 
     public LimitProperties {
         syncPageSize = orDefault(syncPageSize, 200);
@@ -27,6 +30,13 @@ public record LimitProperties(
         // 8 MiB of ProseMirror JSON is a very long chapter; beyond that something is wrong
         // and we would rather refuse than let it through to the database.
         maxDocumentBytes = orDefault(maxDocumentBytes, 8 * 1024 * 1024);
+        maxPendingCompilesPerUser = orDefault(maxPendingCompilesPerUser, 5);
+        // A page stops at whichever comes first, rows or bytes. Mobile data is the reason:
+        // 500 rows of full documents has no predictable size.
+        maxSyncPageBytes = orDefault(maxSyncPageBytes, 4 * 1024 * 1024);
+        // High on purpose. Some authors keep an entire novel in one document, and 200k
+        // words is several megabytes of ProseMirror JSON.
+        maxRequestBytes = orDefault(maxRequestBytes, 32 * 1024 * 1024);
     }
 
     private static Integer orDefault(Integer value, int fallback) {
