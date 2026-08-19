@@ -132,6 +132,13 @@ public class BinderService {
         UUID currentParent = jdbc.sql("SELECT parent_id FROM binder_item WHERE id = :id")
                 .param("id", itemId).query(UUID.class).optional().orElse(null);
 
+        // Already in the trash: do nothing. Re-trashing would overwrite
+        // trashed_from_parent_id with the trash node itself, after which the item could
+        // only ever be "restored" back into the trash — unrecoverable by any UI path.
+        if (trashId.equals(currentParent)) {
+            return;
+        }
+
         String orderKey = orderKeyFor(projectId, trashId, null, itemId);
         jdbc.sql("""
                 UPDATE binder_item
@@ -149,6 +156,16 @@ public class BinderService {
     @Transactional
     public void restore(UUID itemId, UUID deviceId) {
         UUID projectId = requireProjectOf(itemId);
+
+        // Restoring something that is not in the trash must not relocate it. Without
+        // this guard a stray call moves a live item to the root, because its
+        // trashed_from_parent_id is legitimately null.
+        UUID currentParent = jdbc.sql("SELECT parent_id FROM binder_item WHERE id = :id")
+                .param("id", itemId).query(UUID.class).optional().orElse(null);
+        if (findTrash(projectId).filter(trash -> trash.equals(currentParent)).isEmpty()) {
+            return;
+        }
+
         UUID origin = jdbc.sql("SELECT trashed_from_parent_id FROM binder_item WHERE id = :id")
                 .param("id", itemId).query(UUID.class).optional().orElse(null);
 
