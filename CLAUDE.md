@@ -139,6 +139,13 @@ cd worker && npm run dev
 cd worker && npm test -- src/export/epub.test.ts     # single test file
 ```
 
+## Binder tree semantics
+
+`BinderService` owns structural operations. Two rules that are not obvious from the schema:
+
+- **Trash is a move, not a delete.** Trashing reparents an item to the project's trash node and records `trashed_from_parent_id`; the item keeps syncing and stays restorable. `deleted_at` is reserved for the tombstone written when the trash is emptied — rows are retained, never removed, so a client that was offline still learns the item is gone. Restoring to a parent that has since been trashed falls back to root rather than refusing, because a refusal strands the item where the author cannot reach it.
+- **Cycle prevention is application-level and cannot be moved into the schema.** No CHECK constraint can express "this item is not among its own descendants". `BinderService.move` runs a recursive CTE before every reparent. Without it, a mis-ordered drag detaches an entire subtree: chapters that exist in the database but appear nowhere in the binder. Three tests cover it, and disabling the guard turns them red.
+
 ## Sync endpoint status
 
 `GET|POST /api/v1/projects/{id}/sync` is implemented in `com.noveltea.sync.SyncService`. What is and is not true of it today:

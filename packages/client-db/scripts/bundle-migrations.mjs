@@ -17,7 +17,7 @@ const files = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql")).sort(
 
 const seen = new Set();
 const entries = files.map((file) => {
-  const match = /^(\d+)_([a-z0-9-]+)\.sql$/.exec(file);
+  const match = /^(\d+)_([a-z0-9_-]+)\.sql$/.exec(file);
   if (!match) {
     throw new Error(`Migration filename must be NNN_name.sql, got: ${file}`);
   }
