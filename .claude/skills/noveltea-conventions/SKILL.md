@@ -13,7 +13,7 @@ The failure mode this codebase is prone to is **silent divergence**: a write tha
 
 ## 1. Before writing a feature: decide its edition
 
-Core (this repo, ELv2) or Pro (private repo)? Decide first — see the table in `CLAUDE.md`.
+Core (this repo, ELv2) or commercial (private repo)? Decide first — see `CLAUDE.md`, and the gitignored `PAID-FEATURES.local.md` for the roster.
 
 If Pro: the work here is limited to defining or extending an interface (`ExportProvider`, `SharingProvider`) plus a `501` fallback. **Do not write the implementation in this repo, even behind a flag or disabled by default.** Code that ships here is code a self-hoster may legitimately run.
 

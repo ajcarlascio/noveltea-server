@@ -298,20 +298,19 @@ DELETE /members/:id
 
 **Impact on sync:** `GET /sync` must filter `change_log` rows by the caller's role and scope. Deletions must remain observable to scoped clients without leaking titles or the existence of out-of-scope siblings. Every entity type added to `change_log` needs its visibility rule written at the same time.
 
-### A7 — Open-core split: what is free and what is paid
+### A7 — Open-core split
 
-The product splits into a public **Core** (this repo, ELv2) and a private **Pro** repo (proprietary).
+The product splits into a public **Core** (this repo, ELv2) and a private commercial repo.
+The capability roster is not recorded in this repository; it lives in the gitignored
+`PAID-FEATURES.local.md`.
 
-| Capability | Core | Commercial |
-|---|---|---|
-| ***REDACTED*** |
-| ***REDACTED*** |
-| Export | ***REDACTED*** |
-| ***REDACTED*** |
+Gating is architectural, not licensed: **no commercial code is committed to the public
+repo**, not even disabled. Core defines two extension points — `ExportProvider` and
+`SharingProvider` — and returns `501` with an upgrade pointer for anything unimplemented.
+Sync must function with no `SharingProvider` present, taking the single-owner path.
 
-Gating is architectural, not licensed: **no Pro code is committed to the public repo**, not even disabled. Core defines two extension points — `ExportProvider` and `SharingProvider` — and returns `501` with an upgrade pointer for anything unimplemented. Sync must function with no `SharingProvider` present, taking the single-owner path.
-
-The A6 tables ship in **Core** migrations even though the feature is Pro, so that a license upgrade requires no schema migration. Core simply never writes to them.
+The A6 sharing tables ship in **Core** migrations even though the feature is commercial, so
+that a licence upgrade requires no schema migration. Core simply never writes to them.
 
 ### A8 — Export implementation: Pandoc dropped
 

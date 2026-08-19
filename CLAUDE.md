@@ -14,21 +14,28 @@ Copyright Anthony Carlascio. This repo is the **open core** under Elastic Licens
 
 ## Editions — this repo is not the whole product
 
-| | Core | Commercial |
-|---|---|---|
-| ***REDACTED*** |
-| ***REDACTED*** |
-| Export | ***REDACTED*** |
-| ***REDACTED*** |
+NovelTea is open-core. **This repository is Core** (Elastic License 2.0). Commercial
+features live in a separate private repo and ship as Spring and Node modules that Core
+loads if present. The specific roster is deliberately not recorded here — see
+`PAID-FEATURES.local.md`, which is gitignored.
 
-**Paid functionality must never be committed to this repository**, not even disabled or feature-flagged. The gate is architectural, not legal — code that ships here is code a self-hoster may legitimately run. Pro ships as separate Spring and Node modules that the core loads if present.
+**Commercial functionality must never be committed to this repository**, not even disabled
+or feature-flagged. The gate is architectural, not legal — code that ships here is code a
+self-hoster may legitimately run.
 
-Extension points the core owns (and must keep working when nothing implements them):
+Extension points Core owns (and must keep working when nothing implements them):
 
-- `ExportProvider` — core registers `md`/`html`/`txt`; Pro registers the rest. Unimplemented formats return `501` with an upgrade pointer, never a stack trace.
-- `SharingProvider` — absent in core. All `/members`, `/invitations` routes return `501`. **Sync must work with no provider present**, taking the single-owner path.
+- `ExportProvider` — Core registers the always-free formats; the private repo registers the
+  rest. Unimplemented formats return `501` with an upgrade pointer, never a stack trace.
+- `SharingProvider` — absent in Core. All `/members`, `/invitations` routes return `501`.
+  **Sync must work with no provider present**, taking the single-owner path.
 
-When adding a feature, decide its edition *before* writing it. Retrofitting an extension point around code already merged here is the expensive path.
+If a commercial feature needs new tables, the *migration still lands in Core*, so upgrading
+a licence never requires a schema migration against a live database. Core writes nothing to
+them.
+
+When adding a feature, decide its edition *before* writing it. Retrofitting an extension
+point around code already merged here is the expensive path.
 
 ## Architecture: two runtimes, deliberately
 
@@ -145,6 +152,16 @@ cd worker && npm test -- src/export/epub.test.ts     # single test file
 
 - **Trash is a move, not a delete.** Trashing reparents an item to the project's trash node and records `trashed_from_parent_id`; the item keeps syncing and stays restorable. `deleted_at` is reserved for the tombstone written when the trash is emptied — rows are retained, never removed, so a client that was offline still learns the item is gone. Restoring to a parent that has since been trashed falls back to root rather than refusing, because a refusal strands the item where the author cannot reach it.
 - **Cycle prevention is application-level and cannot be moved into the schema.** No CHECK constraint can express "this item is not among its own descendants". `BinderService.move` runs a recursive CTE before every reparent. Without it, a mis-ordered drag detaches an entire subtree: chapters that exist in the database but appear nowhere in the binder. Three tests cover it, and disabling the guard turns them red.
+
+## Merge editor support
+
+`MergeService` reconciles a conflict copy with its original. Three things to know:
+
+- **The link is a foreign key, not a title.** `binder_item.conflict_of_id` points at the item a copy forked from, with `conflict_base_version` recording how far behind the losing client was. Titles are author-editable and ambiguous once two copies exist; never match on them.
+- **No diff is computed server-side.** Content is ProseMirror JSON and only the editor understands its schema — which the client already has. The server returns both documents and their provenance; the client renders the merge. A server-side structural diff would be a second, divergent implementation of the document model.
+- **Resolving trashes the copy, never deletes it.** A bad merge must stay recoverable. `resolve` also refuses on a stale `baseVersion` rather than forking again — merging is interactive, so the author re-opens the updated pair. Forking on merge would let copies breed without bound.
+
+`ConflictSummary.originalVersion` and `ConflictDetail.originalVersion` are the **document's** version, which is what `resolve` validates. `binder_item` carries its own independent version for structural edits; returning that one produces a `baseVersion` that can never match.
 
 ## Sync endpoint status
 
