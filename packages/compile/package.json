@@ -1,0 +1,17 @@
+{
+  "name": "@noveltea/compile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Turns ProseMirror documents into the manuscript formats Core ships",
+  "license": "SEE LICENSE IN ../../LICENSE.md",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "files": ["src"],
+  "engines": { "node": ">=22.6.0" },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "node-html-parser": "^7.0.1"
+  }
+}

@@ -185,6 +185,21 @@ Rules worth keeping:
 - **`WireEnumTest`** drives off the enum constants themselves, so a new value is covered the moment it is added: round-tripping, unique lowercase wire forms, case and whitespace tolerance, and empty (never an exception) for null, blank, unknown and injection-shaped input.
 - **`EnumSchemaAlignmentTest`** reads the allowed values out of `pg_constraint` and compares them to the enum, then writes every value to the real table. The enum and the CHECK constraint are two declarations of one fact in different languages; nothing but this keeps them honest. Add a value to one and not the other and it fails, naming the constraint.
 
+## Compile
+
+`packages/compile` turns ProseMirror documents into the formats Core ships (`txt`, `md`, `html`). `ExportProvider` on the Java side reports the same boundary; a commercial module contributes the remaining formats by supplying another implementation, and Core must keep working with only its own provider present.
+
+Rules the tests enforce:
+
+- **Only document text is converted.** Folders contribute a title at most. **Synopses and notes are never exported under any option** — they are the author's scaffolding, not the book, and exporting them by accident is worse than refusing.
+- **`planCompile()` reports what would be included before anything is rendered**, so an author learns that half their selection is folders before waiting for a long manuscript rather than after.
+- **An unknown node or mark warns and keeps its text.** Losing words to a node type the package has not met is the worst available outcome; the wrapper is dropped and the prose survives. Each unknown type is reported once, not per occurrence.
+- **A format Core does not ship throws** rather than quietly producing something else.
+
+Markdown escaping is deliberately narrow: escaping every `.` and `-` puts backslashes through ordinary prose. Only ambiguous inline characters are escaped, and block markers only at line start.
+
+Tests parse HTML output with an independent parser rather than comparing it to a string the serializer produced, and one property test asserts every authored word survives into every format. See `packages/compile/README.md`.
+
 ## Constants and limits
 
 - **Closed value sets are enums in `com.noveltea.model`**, each with a `wire()` form matching its `text` column and CHECK constraint. Adding a value means editing one enum, not hunting string literals. Do not reintroduce bare string comparisons for entity types, ops, formats, roles or platforms.
