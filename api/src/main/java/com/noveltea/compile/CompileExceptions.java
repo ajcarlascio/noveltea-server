@@ -10,6 +10,13 @@ public final class CompileExceptions {
         }
     }
 
+    /** Too many exports already waiting for this account. */
+    public static class TooManyPendingCompiles extends RuntimeException {
+        public TooManyPendingCompiles(int limit) {
+            super("you already have " + limit + " exports waiting; wait for one to finish");
+        }
+    }
+
     /** The artifact is gone: purged after its TTL, or the job never produced one. */
     public static class ArtifactUnavailable extends RuntimeException {
         public ArtifactUnavailable(String message) {

@@ -204,4 +204,22 @@ class WebApiTest extends AbstractPostgresTest {
                 .isEqualTo(400);
         assertThat(body(result).get("message").asText()).contains("q");
     }
+
+    @Test
+    @DisplayName("health endpoints are reachable without a token")
+    void healthIsPublic() throws Exception {
+        mvc.perform(get("/health"))
+                .andExpect(r -> assertThat(r.getResponse().getStatus()).isEqualTo(200));
+        mvc.perform(get("/health/ready"))
+                .andExpect(r -> assertThat(r.getResponse().getStatus()).isEqualTo(200));
+    }
+
+    @Test
+    @DisplayName("health reveals nothing about the deployment")
+    void healthLeaksNothing() throws Exception {
+        String body = mvc.perform(get("/health/ready")).andReturn().getResponse().getContentAsString();
+        assertThat(body)
+                .doesNotContain("postgres").doesNotContain("jdbc")
+                .doesNotContain("version").doesNotContain("localhost");
+    }
 }

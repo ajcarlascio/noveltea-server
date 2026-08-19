@@ -5,6 +5,7 @@ import com.noveltea.auth.AuthExceptions.EmailAlreadyRegistered;
 import com.noveltea.auth.AuthExceptions.InvalidCredentials;
 import com.noveltea.binder.BinderExceptions.BinderCycle;
 import com.noveltea.compile.CompileExceptions.ArtifactUnavailable;
+import com.noveltea.compile.CompileExceptions.TooManyPendingCompiles;
 import com.noveltea.compile.CompileExceptions.UnavailableInThisEdition;
 import com.noveltea.binder.BinderExceptions.BinderItemNotFound;
 import com.noveltea.binder.BinderExceptions.CrossProjectMove;
@@ -83,6 +84,13 @@ public class GlobalExceptionHandler {
             UnavailableInThisEdition e, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED)
                 .body(ApiError.of("unavailable_in_this_edition", e.getMessage(), request.getRequestURI()));
+    }
+
+    @ExceptionHandler(TooManyPendingCompiles.class)
+    public ResponseEntity<ApiError> tooManyCompiles(
+            TooManyPendingCompiles e, HttpServletRequest request) {
+        return ResponseEntity.status(429)
+                .body(ApiError.of("too_many_pending_compiles", e.getMessage(), request.getRequestURI()));
     }
 
     /** The file is gone or was never produced. Not an error the caller can fix by retrying. */

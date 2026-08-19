@@ -47,3 +47,8 @@ noveltea:
     # Automatic captures are pruned to this many per document. Manual snapshots are never
     # pruned: the author asked for those.
     keep-automatic-per-document: 25
+
+  rate-limit:
+    enabled: false
+  cors:
+    allowed-origins: []
