@@ -58,3 +58,8 @@ noveltea:
     # container-local scratch space.
     staging-path: ${NOVELTEA_STAGING_PATH:/var/lib/noveltea/staging}
     download-ttl: 1h
+
+  snapshots:
+    # Automatic captures are pruned to this many per document. Manual snapshots are never
+    # pruned: the author asked for those.
+    keep-automatic-per-document: 25

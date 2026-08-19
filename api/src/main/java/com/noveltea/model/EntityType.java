@@ -18,7 +18,12 @@ public enum EntityType {
      * writer for it, so a push reports not_implemented rather than crashing on an
      * unrecognised type.
      */
-    PROJECT_MEMBER("project_member", "project_member");
+    PROJECT_MEMBER("project_member", "project_member"),
+    /**
+     * Only MANUAL snapshots ever appear in the feed. Automatic captures stay on the device
+     * that made them — see migration 20260819-19 for why.
+     */
+    SNAPSHOT("snapshot", "snapshot");
 
     private final String wire;
     private final String table;

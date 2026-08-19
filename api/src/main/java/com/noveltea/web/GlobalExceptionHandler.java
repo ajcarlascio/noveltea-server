@@ -10,6 +10,8 @@ import com.noveltea.binder.BinderExceptions.BinderItemNotFound;
 import com.noveltea.binder.BinderExceptions.CrossProjectMove;
 import com.noveltea.merge.MergeExceptions.NotAConflictCopy;
 import com.noveltea.merge.MergeExceptions.StaleOriginal;
+import com.noveltea.snapshot.SnapshotExceptions.SnapshotNotFound;
+import com.noveltea.snapshot.SnapshotExceptions.StaleDocument;
 import com.noveltea.project.ProjectExceptions.ProjectNotDeleted;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
@@ -90,7 +92,7 @@ public class GlobalExceptionHandler {
 
     // --------------------------------------------------------------- domain
 
-    @ExceptionHandler({BinderItemNotFound.class, NotAConflictCopy.class})
+    @ExceptionHandler({BinderItemNotFound.class, NotAConflictCopy.class, SnapshotNotFound.class})
     public ResponseEntity<ApiError> notFound(RuntimeException e, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("not_found", e.getMessage(), request.getRequestURI()));
@@ -106,6 +108,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> notDeleted(ProjectNotDeleted e, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of("project_not_deleted", e.getMessage(), request.getRequestURI()));
+    }
+
+    @ExceptionHandler(StaleDocument.class)
+    public ResponseEntity<ApiError> staleDocument(StaleDocument e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("stale_document", e.getMessage(), request.getRequestURI(),
+                        Map.of("currentVersion", e.currentVersion())));
     }
 
     @ExceptionHandler(StaleOriginal.class)

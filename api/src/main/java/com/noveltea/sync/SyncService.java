@@ -141,8 +141,18 @@ public class SyncService {
         if (table == null) {
             return Map.of();
         }
+        // A snapshot is a full copy of a document. Shipping content in the feed would make
+        // manual snapshots the heaviest thing a client downloads, for prose it may never
+        // open — clients fetch the body from GET /snapshots/{id} when the author asks.
+        // Parenthesised deliberately: `to_jsonb(t) - 'content'::text` casts the KEY, not
+        // the result, and hands back jsonb instead of the text this expects.
+        String projection = EntityType.SNAPSHOT.wire().equals(entityType)
+                ? "(to_jsonb(t) - 'content')::text"
+                : "to_jsonb(t)::text";
+
         List<Map<String, Object>> rows = jdbc
-                .sql("SELECT id, to_jsonb(t)::text AS row_json FROM " + table + " t WHERE id = ANY(:ids)")
+                .sql("SELECT id, " + projection + " AS row_json FROM " + table
+                        + " t WHERE id = ANY(:ids)")
                 .param("ids", ids.toArray(UUID[]::new))
                 .query()
                 .listOfRows();
@@ -225,7 +235,89 @@ public class SyncService {
         switch (entityType) {
             case DOCUMENT -> applyDocument(projectId, deviceId, change, applied, conflicts);
             case BINDER_ITEM -> applyBinderItem(projectId, deviceId, change, applied, conflicts);
+            case SNAPSHOT -> applySnapshot(projectId, deviceId, op, change, applied, conflicts);
             default -> applyDataEntity(projectId, deviceId, entityType, op, change, applied, conflicts);
+        }
+    }
+
+    /**
+     * Snapshots that arrive over sync are manual by definition.
+     *
+     * <p>Automatic captures never leave the device that made them, so anything pushed here
+     * is a deliberate "keep this version" and is stored as such regardless of what the
+     * payload claims. Snapshots are immutable: only create and delete are meaningful, and
+     * an update is refused rather than silently rewriting history.
+     */
+    private void applySnapshot(
+            UUID projectId,
+            UUID deviceId,
+            ChangeOp op,
+            ChangeRequest change,
+            List<AppliedChange> applied,
+            List<ConflictRecord> conflicts) {
+
+        Optional<Long> current = jdbc.sql("SELECT version FROM snapshot WHERE id = :id")
+                .param("id", change.entityId()).query(Long.class).optional();
+
+        switch (op) {
+            case DELETE -> {
+                if (current.isPresent()) {
+                    jdbc.sql("DELETE FROM snapshot WHERE id = :id")
+                            .param("id", change.entityId()).update();
+                    recordChange(projectId, "snapshot", change.entityId(), "delete", deviceId);
+                }
+                applied.add(new AppliedChange(change.entityId(), "snapshot", current.orElse(0L)));
+            }
+            case CREATE -> {
+                if (current.isPresent()) {
+                    applied.add(new AppliedChange(change.entityId(), "snapshot", current.get()));
+                    return;
+                }
+                String documentIdText = optionalText(change, "document_id");
+                if (documentIdText == null || change.data() == null || !change.data().hasNonNull("content")) {
+                    conflicts.add(new ConflictRecord(change.entityId(), "snapshot",
+                            ConflictReason.INVALID_REQUEST, null, null,
+                            "a snapshot needs document_id and content"));
+                    return;
+                }
+                UUID documentId = UUID.fromString(documentIdText);
+
+                // The document must belong to the project being synced, or a caller could
+                // attach history to somebody else's manuscript.
+                boolean inProject = Boolean.TRUE.equals(jdbc.sql("""
+                        SELECT EXISTS (SELECT 1 FROM binder_item
+                                        WHERE id = :id AND project_id = :projectId)
+                        """)
+                        .param("id", documentId).param("projectId", projectId)
+                        .query(Boolean.class).single());
+                if (!inProject) {
+                    conflicts.add(new ConflictRecord(change.entityId(), "snapshot",
+                            ConflictReason.INVALID_REQUEST, null, null,
+                            "document_id does not refer to anything in this project"));
+                    return;
+                }
+
+                jdbc.sql("""
+                        INSERT INTO snapshot
+                            (id, project_id, document_id, content, word_count, label,
+                             is_automatic, created_by_device_id, updated_by_device_id)
+                        VALUES (:id, :projectId, :documentId, CAST(:content AS jsonb), :wordCount,
+                                :label, false, :deviceId, :deviceId)
+                        """)
+                        .param("id", change.entityId())
+                        .param("projectId", projectId)
+                        .param("documentId", documentId)
+                        .param("content", change.data().get("content").toString())
+                        .param("wordCount", optionalInt(change, "word_count", 0))
+                        .param("label", optionalText(change, "label"))
+                        .param("deviceId", deviceId)
+                        .update();
+                recordChange(projectId, "snapshot", change.entityId(), "create", deviceId);
+                applied.add(new AppliedChange(change.entityId(), "snapshot", 1L));
+            }
+            case UPDATE -> conflicts.add(new ConflictRecord(change.entityId(), "snapshot",
+                    ConflictReason.INVALID_REQUEST, null, null,
+                    "snapshots are immutable; create a new one instead"));
         }
     }
 
