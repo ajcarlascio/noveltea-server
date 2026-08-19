@@ -196,6 +196,18 @@ We do not store HTML, so there is nothing to sanitise on write; the exposure is 
 
 `IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
 
+## Search
+
+`GET /projects/{id}/search?q=…` searches titles, synopses, body text and notes across a project.
+
+- **Synopses and notes are searchable although they are never exported.** They are exactly what an author searches to find a scene again; leaving them out would make them write-only. Compile and search deliberately disagree about them.
+- **Weighted, not flat.** Title beats synopsis beats body beats notes. Someone typing "lighthouse" usually wants the scene called that, not the twentieth paragraph mentioning one. Titles live on `binder_item` so they carry their own `title_tsv` and their weight is applied in the query; the rest are weighted inside `document.search_tsv`.
+- **`websearch_to_tsquery` parses the input**, so quoted phrases, `or` and `-exclusion` work, and malformed input yields no results rather than an error. Never build a tsquery by string concatenation.
+- **Trashed items are excluded by default** and returned flagged when asked for; tombstoned ones never appear.
+- Folders match too — they have titles worth finding.
+
+`document.search_text` is supplied by clients on sync push, since only they parse ProseMirror. A document with no body still matches on its title.
+
 ## Snapshots
 
 Point-in-time copies of a document, so a revision pass can be undone. `POST /documents/{id}/snapshots` captures, `GET` lists, `POST /snapshots/{id}/restore` puts one back.
