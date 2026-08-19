@@ -21,3 +21,11 @@ spring:
 logging:
   level:
     liquibase: WARN
+
+noveltea:
+  auth:
+    # Test-only key. Never used outside the test profile.
+    jwt-secret: dGVzdC1vbmx5LXNlY3JldC1ub3QtZm9yLXByb2R1Y3Rpb24tMzJiKw==
+    access-token-ttl: 15m
+    refresh-token-ttl: 60d
+    pairing-code-ttl: 10m

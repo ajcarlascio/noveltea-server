@@ -30,3 +30,13 @@ spring:
 
 server:
   port: ${PORT:8080}
+
+noveltea:
+  auth:
+    # No default on purpose: a fallback signing key is a fallback that reaches
+    # production. Startup fails if this is unset or shorter than 32 bytes.
+    #   export NOVELTEA_JWT_SECRET=$(openssl rand -base64 48)
+    jwt-secret: ${NOVELTEA_JWT_SECRET:}
+    access-token-ttl: 15m
+    refresh-token-ttl: 60d
+    pairing-code-ttl: 10m

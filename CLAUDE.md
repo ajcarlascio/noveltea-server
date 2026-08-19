@@ -163,12 +163,26 @@ cd worker && npm test -- src/export/epub.test.ts     # single test file
 
 `ConflictSummary.originalVersion` and `ConflictDetail.originalVersion` are the **document's** version, which is what `resolve` validates. `binder_item` carries its own independent version for structural edits; returning that one produces a `baseVersion` that can never match.
 
+## Auth and error handling
+
+`POST /auth/register|login` create an account or a session; `POST /auth/pairing-codes` mints a short code on a trusted device, which `POST /auth/pair` redeems to onboard a second one. `POST /auth/refresh` rotates.
+
+Rules worth keeping:
+
+- **`noveltea.auth.jwt-secret` has no default and startup fails without it** (32 bytes minimum). A fallback signing key is a fallback that reaches production. Set `NOVELTEA_JWT_SECRET`; the test profile carries its own.
+- **Refresh tokens rotate on every use and are stored only as SHA-256 hashes.** A leaked token works at most once, and the legitimate device's next refresh failing is a detectable signal. Pairing codes are stored hashed for the same reason.
+- **Every auth failure returns one identical message.** Distinguishing "no such account" from "wrong password" turns login into an account-enumeration oracle.
+- **`ProjectAccess` is the single authorization gate.** Core recognises ownership only; the commercial `SharingProvider` extends it rather than replacing it.
+- **A resource the caller may not see returns 404, never 403** — a 403 confirms it exists. But *unauthenticated* is 401, not 403, so clients know whether refreshing a token would help. Spring defaults to 403 for both; `RestAuthEntryPoints` corrects it.
+
+`GlobalExceptionHandler` owns every mapping — controllers must not declare their own `@ExceptionHandler`. Unexpected exceptions are logged with a stack trace and answered with a generic message, because exception text routinely carries SQL, table names and parameter values.
+
 ## Sync endpoint status
 
 `GET|POST /api/v1/projects/{id}/sync` is implemented in `com.noveltea.sync.SyncService`. What is and is not true of it today:
 
 - **Writable entity types are `binder_item` and `document` only.** Everything else returns a per-change conflict with reason `not_implemented` rather than silently dropping fields. Extend `SyncService.WRITABLE` and add a writer when you add a type.
-- **`SecurityConfig` permits every request.** It is a placeholder so sync could be exercised before device pairing exists. It must be replaced before any deployment, and the pull feed must gain role/subtree visibility filtering at the same time.
+- **Auth is real now.** Every route under `/api/v1` needs a bearer access token except register, login, refresh and pair. The device is taken from the token's `did` claim, never from a header, so a client cannot attribute writes to another device. The pull feed still needs role/subtree visibility filtering, which arrives with the commercial `SharingProvider`.
 - **The conflict copy is the whole safety net.** A stale `document` write is never merged and never dropped: the server keeps its version, the client's text is stored as a titled sibling, and the response returns `conflictCopyId`. The client-side merge editor that reconciles the pair is not built yet — until it is, authors see two documents.
 - **Tree writes are last-write-wins** by arrival. Document content never takes that path.
 
