@@ -74,7 +74,24 @@ public class SyncService {
     }
 
     public PullResponse pull(UUID projectId, UUID deviceId, long since, int limit) {
+        return pull(projectId, deviceId, since, limit, null);
+    }
+
+    /**
+     * @param clientEpoch the epoch the client last synced against, or null if it has none.
+     *     A mismatch means the server moved backwards — restored from a backup — and the
+     *     client is holding data the server no longer has.
+     */
+    public PullResponse pull(UUID projectId, UUID deviceId, long since, int limit, Long clientEpoch) {
         Objects.requireNonNull(projectId, "projectId");
+
+        long epoch = jdbc.sql("SELECT sync_epoch FROM project WHERE id = :id")
+                .param("id", projectId).query(Long.class).optional().orElse(1L);
+
+        // A client that has never synced sends no epoch; since=0 is already a full rebuild.
+        if (clientEpoch != null && clientEpoch != epoch) {
+            return new PullResponse(List.of(), 0L, false, true, epoch);
+        }
 
         // If the feed has been trimmed past this cursor, the client cannot be told what
         // changed — only that it must look again. Returning a partial feed instead would
@@ -94,7 +111,7 @@ public class SyncService {
             // Never below the purge point, even when the feed is now empty. Resuming at 0
             // would put the client straight back into a resync, forever.
             long resumeAt = Math.max(purgedBelow, currentMax);
-            return new PullResponse(List.of(), resumeAt, false, true);
+            return new PullResponse(List.of(), resumeAt, false, true, epoch);
         }
 
         int capped = Math.min(Math.max(limit, 1), limits.maxSyncPageSize());
@@ -174,7 +191,7 @@ public class SyncService {
                     .param("latest", latest).param("deviceId", deviceId).update();
         }
 
-        return new PullResponse(changes, latest, hasMore, false);
+        return new PullResponse(changes, latest, hasMore, false, epoch);
     }
 
     /**

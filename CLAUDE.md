@@ -210,11 +210,23 @@ Delivery goes through `PasswordResetDelivery`. Until mail exists, the default lo
 
 ## Backup and restore
 
-Back up the database — the novel lives there — plus the `server` export mount if generated files matter. The staging directory is transient and should not be preserved. `DATABASECHANGELOG` is included in a dump, so migrations do not re-run on restore; if the dump predates the code, pending ones apply at startup.
+**Back up the database. Nothing else is the author's work.** Exports are regenerated from it on demand, and the staging directory is transient by design — neither belongs in a backup, and including them makes the backup larger and slower for no recovery value. Authors who want their own copy of a compiled manuscript take the `download` destination and keep it on their own device; that is their backup, not the server's.
 
-**The hazard: a restore silently desynchronises every client.** Restoring rewinds `change_log`, but devices keep cursors past the restored maximum. They pull, receive nothing, and conclude they are current while the server has rolled back underneath them — their local copy diverges and nothing detects it. The `change_log_purged_below` check only catches cursors that are too *low*.
+```bash
+pg_dump --format=custom noveltea > noveltea-$(date +%F).dump
+```
 
-There is no mechanism to force a resync. A `project.sync_epoch`, bumped after a restore and compared by clients, would fix it. **Until that exists, a restore needs clients wiped by hand.**
+`DATABASECHANGELOG` is included, so migrations do not re-run on restore; if the dump predates the code, pending ones apply at startup. For point-in-time recovery, use WAL archiving rather than more frequent dumps.
+
+**After restoring, bump the epoch.** This is not optional:
+
+```sql
+UPDATE project SET sync_epoch = sync_epoch + 1;
+```
+
+A restore rewinds `change_log`, but every device keeps a cursor past the restored maximum. Without a bump they pull, receive nothing, and conclude they are up to date — while the server has rolled back underneath them. The local copy silently becomes the only complete one and nothing detects the divergence. `change_log_purged_below` cannot catch this: it detects a cursor that is too *low*, not a server that moved backwards.
+
+Clients echo the epoch on every pull; a mismatch returns `resyncRequired` and they rebuild from the binder and documents.
 
 ## Limits and admission control
 

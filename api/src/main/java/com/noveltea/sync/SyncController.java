@@ -26,9 +26,10 @@ public class SyncController {
             @AuthenticationPrincipal CurrentUser user,
             @PathVariable UUID projectId,
             @RequestParam(defaultValue = "0") long since,
-            @RequestParam(defaultValue = "200") int limit) {
+            @RequestParam(defaultValue = "200") int limit,
+            @RequestParam(required = false) Long epoch) {
         access.requireReadable(user, projectId);
-        return sync.pull(projectId, user.deviceId(), since, limit);
+        return sync.pull(projectId, user.deviceId(), since, limit, epoch);
     }
 
     /**
