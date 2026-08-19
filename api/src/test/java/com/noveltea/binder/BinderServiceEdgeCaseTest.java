@@ -131,7 +131,8 @@ class BinderServiceEdgeCaseTest extends AbstractPostgresTest {
     void trashNodeCannotBeTrashed() {
         UUID trash = binder.ensureTrash(projectId, deviceA);
         assertThatThrownBy(() -> binder.trash(trash, deviceA))
-                .isInstanceOf(RuntimeException.class);
+                .as("must fail for the right reason, not merely fail")
+                .isInstanceOf(BinderExceptions.BinderCycle.class);
         assertThat(parentOf(trash)).isNull();
     }
 

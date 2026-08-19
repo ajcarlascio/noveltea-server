@@ -271,7 +271,7 @@ public class SyncService {
                 // Re-delivery of a create whose response was lost. Accept silently.
                 applied.add(new AppliedChange(change.entityId(), "document", serverVersion));
             } else {
-                UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content);
+                UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content, base);
                 conflicts.add(new ConflictRecord(
                         change.entityId(), "document", ConflictReason.DUPLICATE_CREATE, copyId, serverVersion));
             }
@@ -303,7 +303,7 @@ public class SyncService {
         }
 
         // Stale base_version: someone else moved the document on. Never merge prose.
-        UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content);
+        UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content, base);
         conflicts.add(new ConflictRecord(
                 change.entityId(), "document", ConflictReason.VERSION_MISMATCH, copyId, serverVersion));
     }
@@ -389,7 +389,7 @@ public class SyncService {
      * reconciles them. This is the mechanism that makes "never lose an author's work"
      * true rather than aspirational.
      */
-    private UUID createConflictCopy(UUID projectId, UUID deviceId, UUID originalId, String content) {
+    private UUID createConflictCopy(UUID projectId, UUID deviceId, UUID originalId, String content, Long baseVersion) {
         Map<String, Object> original = jdbc
                 .sql("SELECT project_id, parent_id, title, order_key FROM binder_item WHERE id = :id")
                 .param("id", originalId)
@@ -401,7 +401,8 @@ public class SyncService {
         String title = (String) original.get("title");
 
         UUID copyId = UUID.randomUUID();
-        insertCopy(projectId, parentId, copyId, conflictTitle(title, deviceId), nextKeyAfter(projectId, parentId, orderKey), deviceId);
+        insertCopy(projectId, parentId, copyId, conflictTitle(title, deviceId),
+                nextKeyAfter(projectId, parentId, orderKey), deviceId, originalId, baseVersion);
         insertDocumentRaw(projectId, deviceId, copyId, content);
         return copyId;
     }
@@ -410,16 +411,20 @@ public class SyncService {
     private UUID createOrphanCopy(UUID projectId, UUID deviceId, UUID missingId, String content) {
         UUID copyId = UUID.randomUUID();
         String title = "Recovered document " + missingId.toString().substring(0, 8);
-        insertCopy(projectId, null, copyId, conflictTitle(title, deviceId), nextKeyAfter(projectId, null, null), deviceId);
+        insertCopy(projectId, null, copyId, conflictTitle(title, deviceId),
+                nextKeyAfter(projectId, null, null), deviceId, null, null);
         insertDocumentRaw(projectId, deviceId, copyId, content);
         return copyId;
     }
 
-    private void insertCopy(UUID projectId, UUID parentId, UUID id, String title, String orderKey, UUID deviceId) {
+    private void insertCopy(UUID projectId, UUID parentId, UUID id, String title, String orderKey,
+            UUID deviceId, UUID conflictOfId, Long conflictBaseVersion) {
         jdbc.sql("""
                 INSERT INTO binder_item
-                    (id, project_id, parent_id, type, title, order_key, version, updated_by_device_id)
-                VALUES (:id, :projectId, :parentId, 'document', :title, :orderKey, 1, :deviceId)
+                    (id, project_id, parent_id, type, title, order_key, version, updated_by_device_id,
+                     conflict_of_id, conflict_base_version, conflict_created_at)
+                VALUES (:id, :projectId, :parentId, 'document', :title, :orderKey, 1, :deviceId,
+                        :conflictOfId, :conflictBaseVersion, now())
                 """)
                 .param("id", id)
                 .param("projectId", projectId)
@@ -427,6 +432,8 @@ public class SyncService {
                 .param("title", title)
                 .param("orderKey", orderKey)
                 .param("deviceId", deviceId)
+                .param("conflictOfId", conflictOfId)
+                .param("conflictBaseVersion", conflictBaseVersion)
                 .update();
         recordChange(projectId, "binder_item", id, "create", deviceId);
     }
