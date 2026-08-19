@@ -139,6 +139,17 @@ cd worker && npm run dev
 cd worker && npm test -- src/export/epub.test.ts     # single test file
 ```
 
+## Sync endpoint status
+
+`GET|POST /api/v1/projects/{id}/sync` is implemented in `com.noveltea.sync.SyncService`. What is and is not true of it today:
+
+- **Writable entity types are `binder_item` and `document` only.** Everything else returns a per-change conflict with reason `not_implemented` rather than silently dropping fields. Extend `SyncService.WRITABLE` and add a writer when you add a type.
+- **`SecurityConfig` permits every request.** It is a placeholder so sync could be exercised before device pairing exists. It must be replaced before any deployment, and the pull feed must gain role/subtree visibility filtering at the same time.
+- **The conflict copy is the whole safety net.** A stale `document` write is never merged and never dropped: the server keeps its version, the client's text is stored as a titled sibling, and the response returns `conflictCopyId`. The client-side merge editor that reconciles the pair is not built yet — until it is, authors see two documents.
+- **Tree writes are last-write-wins** by arrival. Document content never takes that path.
+
+When changing any of this, run the mutation check: delete the `tx_id` predicate from the pull query, or make a conflict overwrite instead of copy, and confirm the suite goes red. Tests that cannot fail are not protecting anything.
+
 ## Open questions
 
 1. Compile job dispatch between Spring and the worker — Postgres `LISTEN/NOTIFY` on a `compile_job` table avoids adding a broker, but is unproven here.
