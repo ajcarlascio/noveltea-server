@@ -196,6 +196,17 @@ We do not store HTML, so there is nothing to sanitise on write; the exposure is 
 
 `IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
 
+## Limits and admission control
+
+- **Rate limiting covers credential endpoints only** (`login`, `register`, `refresh`, `pair`). Sync is deliberately untouched: a first sync fetches every document and a resync rebuilds from scratch, so a client legitimately makes hundreds of requests in seconds. Any rate low enough to deter guessing would break exactly those flows. Verified live: 200 rapid pulls and 150 item creations all served, while the 11th login attempt is refused.
+- **Compiles are bounded by queue depth, not by rate.** An author tuning a preset exports repeatedly and legitimately; each finished job frees its slot at once, so that workflow never meets the limit. Identical pending jobs are also deduplicated — 30 identical requests return one job id.
+- **The request ceiling is 32MB.** Deliberately high: some authors keep an entire novel in one document, and 200,000 words is several megabytes of ProseMirror JSON. Oversized requests get a 413 rather than a dropped connection, which a client would otherwise retry forever.
+- **Sync pages stop on bytes as well as rows** (4MB), always emitting at least one row so a single oversized document cannot wedge the feed. This is what makes a page size predictable on mobile data.
+- **`/health` and `/health/ready`** are unauthenticated. Readiness touches the database, because an instance that cannot reach Postgres should not be sent traffic; neither reveals anything about the deployment.
+- **CORS is off unless configured.** `noveltea.cors.allowed-origins` takes exact origins, never a wildcard. A browser client on its own origin must be listed there.
+
+The limiter is **in-memory and therefore per instance**. Behind more than one replica it limits per replica — a real limitation to address before scaling out, not a subtlety.
+
 ## Known weak points
 
 Found by an adversarial pass against the running stack. None is a data-exposure bug; all are availability or abuse risks that need addressing before this faces the open internet.
