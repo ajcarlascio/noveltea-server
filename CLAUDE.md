@@ -14,21 +14,28 @@ Copyright Anthony Carlascio. This repo is the **open core** under Elastic Licens
 
 ## Editions — this repo is not the whole product
 
-| | Core | Commercial |
-|---|---|---|
-| ***REDACTED*** |
-| ***REDACTED*** |
-| Export | ***REDACTED*** |
-| ***REDACTED*** |
+NovelTea is open-core. **This repository is Core** (Elastic License 2.0). Commercial
+features live in a separate private repo and ship as Spring and Node modules that Core
+loads if present. The specific roster is deliberately not recorded here — see
+`PAID-FEATURES.local.md`, which is gitignored.
 
-**Paid functionality must never be committed to this repository**, not even disabled or feature-flagged. The gate is architectural, not legal — code that ships here is code a self-hoster may legitimately run. Pro ships as separate Spring and Node modules that the core loads if present.
+**Commercial functionality must never be committed to this repository**, not even disabled
+or feature-flagged. The gate is architectural, not legal — code that ships here is code a
+self-hoster may legitimately run.
 
-Extension points the core owns (and must keep working when nothing implements them):
+Extension points Core owns (and must keep working when nothing implements them):
 
-- `ExportProvider` — core registers `md`/`html`/`txt`; Pro registers the rest. Unimplemented formats return `501` with an upgrade pointer, never a stack trace.
-- `SharingProvider` — absent in core. All `/members`, `/invitations` routes return `501`. **Sync must work with no provider present**, taking the single-owner path.
+- `ExportProvider` — Core registers the always-free formats; the private repo registers the
+  rest. Unimplemented formats return `501` with an upgrade pointer, never a stack trace.
+- `SharingProvider` — absent in Core. All `/members`, `/invitations` routes return `501`.
+  **Sync must work with no provider present**, taking the single-owner path.
 
-When adding a feature, decide its edition *before* writing it. Retrofitting an extension point around code already merged here is the expensive path.
+If a commercial feature needs new tables, the *migration still lands in Core*, so upgrading
+a licence never requires a schema migration against a live database. Core writes nothing to
+them.
+
+When adding a feature, decide its edition *before* writing it. Retrofitting an extension
+point around code already merged here is the expensive path.
 
 ## Architecture: two runtimes, deliberately
 
@@ -39,18 +46,18 @@ When adding a feature, decide its edition *before* writing it. Retrofitting an e
 
 ## Export stack — no Pandoc
 
-Pandoc is GPL and cannot ship inside a proprietary Pro module. It was also never necessary: Pandoc solves an N×M format matrix, and this is 1×5 from a clean structured source. Everything is serialization, not parsing.
+Pandoc is GPL and cannot ship inside a proprietary module. It was also never necessary: Pandoc solves an N×M format matrix, and this is 1×5 from a clean structured source. Everything is serialization, not parsing.
 
-| Format | Implementation | Edition |
-|---|---|---|
+| Format | Implementation |
+|---|---|
 | HTML | `prosemirror-model` `DOMSerializer` |
 | MD / TXT | `prosemirror-markdown` |
-| DOCX | `docx` npm (MIT) |
+| DOCX | `docx` npm (MIT) — write the node→docx mapping, not raw OOXML |
 | PDF | Generate Typst markup, shell to `typst compile` (Apache-2.0) |
 | RTF | In-house serializer — plain-text control words |
-| EPUB | `jszip` (MIT) over the core HTML serializer |
+| EPUB | `jszip` (MIT) over the Core HTML serializer |
 
-Every format derives from the HTML serializer, which is why it lives in core even though most outputs are paid.
+Which formats are free and which are commercial is recorded in `PAID-FEATURES.local.md`, not here. Every format derives from the HTML serializer, which is why that serializer lives in Core regardless.
 
 Format-specific traps worth knowing before you debug them:
 
@@ -58,7 +65,7 @@ Format-specific traps worth knowing before you debug them:
 - **EPUB** — `mimetype` must be the *first* zip entry and *stored uncompressed*. Content must be well-formed XHTML, not HTML5. Validate against EPUBCheck in CI.
 - **PDF** — do not hand-roll with `pdf-lib`. Typst exists because pagination, widow/orphan control, and hyphenation are genuinely hard; keep them there.
 
-Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is incompatible with Pro distribution.
+Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is incompatible with commercial distribution.
 
 ## Data store
 
@@ -79,7 +86,7 @@ Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is inc
 
 Sync trigger is client-side: a connectivity monitor starts a 15-minute timer on regaining a connection and only fires if it holds for the full window (resets on drop). Manual "sync now" always overrides.
 
-## Sharing and authorization (Pro)
+## Sharing and authorization
 
 Membership is a table, not a column. `project.owner_id` stays only as a denormalized fast path.
 
@@ -91,7 +98,7 @@ project_invitation  (id, project_id, email, role, scope_binder_item_id?,
 
 Roles: `owner | editor | commenter | viewer`. A null `scope_binder_item_id` grants the whole project; otherwise the grant covers exactly one binder subtree — a beta reader sees "Act II" and nothing else. Guest access is an emailed invitation redeemed by magic link, minting a lightweight `is_guest` user; the membership row is the same shape.
 
-These tables live in **core** migrations even though the feature is Pro — schema stays unified so a license upgrade needs no migration, and core simply never writes to them.
+These tables live in **Core** migrations even though no Core code writes to them, so that schema stays unified and a licence upgrade never requires a migration.
 
 **The easiest thing to get wrong:** `GET /sync` must filter `change_log` rows against the caller's scope and role. Deletions must stay observable to scoped clients without leaking titles or the existence of out-of-scope siblings. Every entity type added to `change_log` needs its visibility rule written at the same time.
 
@@ -146,6 +153,16 @@ cd worker && npm test -- src/export/epub.test.ts     # single test file
 - **Trash is a move, not a delete.** Trashing reparents an item to the project's trash node and records `trashed_from_parent_id`; the item keeps syncing and stays restorable. `deleted_at` is reserved for the tombstone written when the trash is emptied — rows are retained, never removed, so a client that was offline still learns the item is gone. Restoring to a parent that has since been trashed falls back to root rather than refusing, because a refusal strands the item where the author cannot reach it.
 - **Cycle prevention is application-level and cannot be moved into the schema.** No CHECK constraint can express "this item is not among its own descendants". `BinderService.move` runs a recursive CTE before every reparent. Without it, a mis-ordered drag detaches an entire subtree: chapters that exist in the database but appear nowhere in the binder. Three tests cover it, and disabling the guard turns them red.
 
+## Merge editor support
+
+`MergeService` reconciles a conflict copy with its original. Three things to know:
+
+- **The link is a foreign key, not a title.** `binder_item.conflict_of_id` points at the item a copy forked from, with `conflict_base_version` recording how far behind the losing client was. Titles are author-editable and ambiguous once two copies exist; never match on them.
+- **No diff is computed server-side.** Content is ProseMirror JSON and only the editor understands its schema — which the client already has. The server returns both documents and their provenance; the client renders the merge. A server-side structural diff would be a second, divergent implementation of the document model.
+- **Resolving trashes the copy, never deletes it.** A bad merge must stay recoverable. `resolve` also refuses on a stale `baseVersion` rather than forking again — merging is interactive, so the author re-opens the updated pair. Forking on merge would let copies breed without bound.
+
+`ConflictSummary.originalVersion` and `ConflictDetail.originalVersion` are the **document's** version, which is what `resolve` validates. `binder_item` carries its own independent version for structural edits; returning that one produces a `baseVersion` that can never match.
+
 ## Sync endpoint status
 
 `GET|POST /api/v1/projects/{id}/sync` is implemented in `com.noveltea.sync.SyncService`. What is and is not true of it today:
@@ -160,6 +177,6 @@ When changing any of this, run the mutation check: delete the `tx_id` predicate 
 ## Open questions
 
 1. Compile job dispatch between Spring and the worker — Postgres `LISTEN/NOTIFY` on a `compile_job` table avoids adding a broker, but is unproven here.
-2. License key issuance and verification for Pro — signing scheme, offline grace period, and what a self-hoster's expired key degrades to.
+2. Licence key issuance and verification — signing scheme, offline grace period, and what a self-hoster's expired key degrades to.
 3. iOS local store details: GRDB schema parity, background sync scheduling.
 4. Comments/annotations as a first-class entity — the `commenter` role currently has nothing to write to.

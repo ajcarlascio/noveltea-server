@@ -13,11 +13,11 @@ The failure mode this codebase is prone to is **silent divergence**: a write tha
 
 ## 1. Before writing a feature: decide its edition
 
-Core (this repo, ELv2) or Pro (private repo)? Decide first — see the table in `CLAUDE.md`.
+Core (this repo, ELv2) or commercial (private repo)? Decide first — see `CLAUDE.md`, and the gitignored `PAID-FEATURES.local.md` for the roster.
 
-If Pro: the work here is limited to defining or extending an interface (`ExportProvider`, `SharingProvider`) plus a `501` fallback. **Do not write the implementation in this repo, even behind a flag or disabled by default.** Code that ships here is code a self-hoster may legitimately run.
+If commercial: the work here is limited to defining or extending an interface (`ExportProvider`, `SharingProvider`) plus a `501` fallback. **Do not write the implementation in this repo, even behind a flag or disabled by default.** Code that ships here is code a self-hoster may legitimately run.
 
-If a Pro feature needs new tables, the *migration still lands in Core* (see A7) so that upgrading a license never requires a schema change. Core writes nothing to them.
+If a commercial feature needs new tables, the *migration still lands in Core* (see A7) so that upgrading a license never requires a schema change. Core writes nothing to them.
 
 ---
 
@@ -71,7 +71,7 @@ Keep this in exactly one query method. If it appears in two places, one of them 
 
 Error semantics for out-of-scope entities: return **`404`, not `403`**. A `403` confirms the item exists, which leaks the structure of a manuscript a scoped guest was never granted.
 
-Status codes: `409` version conflict · `501` unimplemented (Pro absent) · `404` absent *or* out of scope · `403` authenticated, in scope, insufficient role.
+Status codes: `409` version conflict · `501` unimplemented (provider absent) · `404` absent *or* out of scope · `403` authenticated, in scope, insufficient role.
 
 ## 5. Binder ordering
 
@@ -103,7 +103,7 @@ Implement the `ExportProvider` contract (`supports(format)` / `export(doc, confi
 - EPUB: `mimetype` must be the first zip entry and *stored uncompressed*. Content must be well-formed XHTML.
 - RTF: `\uN?` escapes with an ASCII fallback char; declare font and colour tables up front.
 - PDF: pagination stays in Typst. Do not reimplement widow/orphan or hyphenation logic.
-- Dependencies must be MIT/Apache-2.0/BSD. Copyleft cannot ship in Pro.
+- Dependencies must be MIT/Apache-2.0/BSD. Copyleft cannot ship in a commercial module.
 
 ## 9. Tests that must exist
 
@@ -126,5 +126,5 @@ Implement the `ExportProvider` contract (`supports(format)` / `export(doc, confi
 - [ ] No arithmetic on `order_index`
 - [ ] No ProseMirror traversal in Java
 - [ ] Merged Liquibase changesets untouched; new ones have rollbacks
-- [ ] No Pro implementation in this repo
+- [ ] No commercial implementation in this repo
 - [ ] New dependencies are permissively licensed

@@ -5,6 +5,7 @@ import com.noveltea.binder.BinderExceptions.BinderItemNotFound;
 import com.noveltea.binder.BinderExceptions.CrossProjectMove;
 import com.noveltea.order.FractionalIndex;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -37,6 +38,7 @@ public class BinderService {
 
     /** Every live item in the project, parents before children, siblings in order. */
     public List<BinderNode> tree(UUID projectId) {
+        Objects.requireNonNull(projectId, "projectId");
         return jdbc.sql("""
                 SELECT id, parent_id, type, title, order_key, label_id, status_id,
                        trashed_from_parent_id, version, updated_at
@@ -56,6 +58,11 @@ public class BinderService {
      */
     @Transactional
     public UUID create(UUID projectId, UUID deviceId, UUID parentId, String type, String title, UUID afterSiblingId) {
+        // parentId, afterSiblingId and deviceId are legitimately optional: null parent
+        // means root, null sibling means first, null device means an unattributed write.
+        Objects.requireNonNull(projectId, "projectId");
+        requireValidType(type);
+        requireText(title, "title");
         if (parentId != null) {
             requireSameProject(projectId, parentId);
         }
@@ -76,6 +83,8 @@ public class BinderService {
 
     @Transactional
     public void rename(UUID itemId, String title, UUID deviceId) {
+        Objects.requireNonNull(itemId, "itemId");
+        requireText(title, "title");
         UUID projectId = requireProjectOf(itemId);
         jdbc.sql("""
                 UPDATE binder_item
@@ -98,6 +107,7 @@ public class BinderService {
      */
     @Transactional
     public void move(UUID itemId, UUID newParentId, UUID afterSiblingId, UUID deviceId) {
+        Objects.requireNonNull(itemId, "itemId");
         UUID projectId = requireProjectOf(itemId);
 
         if (newParentId != null) {
@@ -123,6 +133,7 @@ public class BinderService {
     /** Moves an item to the trash, remembering where it came from. */
     @Transactional
     public void trash(UUID itemId, UUID deviceId) {
+        Objects.requireNonNull(itemId, "itemId");
         UUID projectId = requireProjectOf(itemId);
         UUID trashId = ensureTrash(projectId, deviceId);
         if (itemId.equals(trashId)) {
@@ -155,6 +166,7 @@ public class BinderService {
     /** Returns an item from the trash to where it was trashed from. */
     @Transactional
     public void restore(UUID itemId, UUID deviceId) {
+        Objects.requireNonNull(itemId, "itemId");
         UUID projectId = requireProjectOf(itemId);
 
         // Restoring something that is not in the trash must not relocate it. Without
@@ -195,6 +207,7 @@ public class BinderService {
      */
     @Transactional
     public int emptyTrash(UUID projectId, UUID deviceId) {
+        Objects.requireNonNull(projectId, "projectId");
         Optional<UUID> trashId = findTrash(projectId);
         if (trashId.isEmpty()) {
             return 0;
@@ -222,6 +235,7 @@ public class BinderService {
     /** Returns the project's trash node, creating it on first use. */
     @Transactional
     public UUID ensureTrash(UUID projectId, UUID deviceId) {
+        Objects.requireNonNull(projectId, "projectId");
         return findTrash(projectId).orElseGet(() -> {
             UUID id = UUID.randomUUID();
             jdbc.sql("""
@@ -238,6 +252,23 @@ public class BinderService {
     }
 
     // -------------------------------------------------------------- internals
+
+    private static final java.util.Set<String> ITEM_TYPES =
+            java.util.Set.of("folder", "document", "trash");
+
+    /** Fails here with a readable message rather than as a CHECK constraint violation. */
+    private static void requireValidType(String type) {
+        if (type == null || !ITEM_TYPES.contains(type)) {
+            throw new IllegalArgumentException(
+                    "type must be one of " + ITEM_TYPES + ", got: " + type);
+        }
+    }
+
+    private static void requireText(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " must not be null or blank");
+        }
+    }
 
     private Optional<UUID> findTrash(UUID projectId) {
         return jdbc.sql("SELECT id FROM binder_item WHERE project_id = :projectId AND type = 'trash'")

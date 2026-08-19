@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -48,6 +49,8 @@ public class SyncService {
             "collection_item", "collection_item",
             "compile_preset", "compile_preset");
 
+    private static final Set<String> VALID_OPS = Set.of("create", "update", "delete");
+
     private static final int MAX_LIMIT = 500;
 
     private final JdbcClient jdbc;
@@ -71,6 +74,7 @@ public class SyncService {
      * client advance its cursor past a row it will never be offered again.
      */
     public PullResponse pull(UUID projectId, long since, int limit) {
+        Objects.requireNonNull(projectId, "projectId");
         int capped = Math.min(Math.max(limit, 1), MAX_LIMIT);
 
         List<Map<String, Object>> rows = jdbc.sql("""
@@ -133,8 +137,11 @@ public class SyncService {
      * jsonb and uuid arrays — arrives correctly typed without per-column translation.
      */
     private Map<UUID, JsonNode> loadEntities(String entityType, List<UUID> ids) {
+        if (entityType == null || ids == null || ids.isEmpty()) {
+            return Map.of();
+        }
         String table = TABLES.get(entityType);
-        if (table == null || ids.isEmpty()) {
+        if (table == null) {
             return Map.of();
         }
         List<Map<String, Object>> rows = jdbc
@@ -168,10 +175,12 @@ public class SyncService {
      * per-change outcomes precisely because partial success is the normal case.
      */
     public PushResponse push(UUID projectId, UUID deviceId, List<ChangeRequest> changes) {
+        Objects.requireNonNull(projectId, "projectId");
+        List<ChangeRequest> safeChanges = changes == null ? List.of() : changes;
         List<AppliedChange> applied = new ArrayList<>();
         List<ConflictRecord> conflicts = new ArrayList<>();
 
-        for (ChangeRequest change : changes) {
+        for (ChangeRequest change : safeChanges) {
             tx.executeWithoutResult(status -> applyOne(projectId, deviceId, change, applied, conflicts));
         }
 
@@ -193,6 +202,21 @@ public class SyncService {
             ChangeRequest change,
             List<AppliedChange> applied,
             List<ConflictRecord> conflicts) {
+
+        // Guard before any lookup: Set.of(...).contains(null) and Map.of(...).get(null)
+        // both throw NullPointerException, so an absent field in the request body would
+        // otherwise fail the whole batch with a 500 instead of one reported conflict.
+        if (change == null
+                || change.entityType() == null
+                || change.entityId() == null
+                || change.op() == null
+                || !VALID_OPS.contains(change.op())) {
+            conflicts.add(new ConflictRecord(
+                    change == null ? null : change.entityId(),
+                    change == null ? null : change.entityType(),
+                    ConflictReason.INVALID_REQUEST, null, null));
+            return;
+        }
 
         if (!WRITABLE.contains(change.entityType())) {
             conflicts.add(new ConflictRecord(
@@ -271,7 +295,7 @@ public class SyncService {
                 // Re-delivery of a create whose response was lost. Accept silently.
                 applied.add(new AppliedChange(change.entityId(), "document", serverVersion));
             } else {
-                UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content);
+                UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content, base);
                 conflicts.add(new ConflictRecord(
                         change.entityId(), "document", ConflictReason.DUPLICATE_CREATE, copyId, serverVersion));
             }
@@ -303,7 +327,7 @@ public class SyncService {
         }
 
         // Stale base_version: someone else moved the document on. Never merge prose.
-        UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content);
+        UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content, base);
         conflicts.add(new ConflictRecord(
                 change.entityId(), "document", ConflictReason.VERSION_MISMATCH, copyId, serverVersion));
     }
@@ -389,7 +413,7 @@ public class SyncService {
      * reconciles them. This is the mechanism that makes "never lose an author's work"
      * true rather than aspirational.
      */
-    private UUID createConflictCopy(UUID projectId, UUID deviceId, UUID originalId, String content) {
+    private UUID createConflictCopy(UUID projectId, UUID deviceId, UUID originalId, String content, Long baseVersion) {
         Map<String, Object> original = jdbc
                 .sql("SELECT project_id, parent_id, title, order_key FROM binder_item WHERE id = :id")
                 .param("id", originalId)
@@ -401,7 +425,8 @@ public class SyncService {
         String title = (String) original.get("title");
 
         UUID copyId = UUID.randomUUID();
-        insertCopy(projectId, parentId, copyId, conflictTitle(title, deviceId), nextKeyAfter(projectId, parentId, orderKey), deviceId);
+        insertCopy(projectId, parentId, copyId, conflictTitle(title, deviceId),
+                nextKeyAfter(projectId, parentId, orderKey), deviceId, originalId, baseVersion);
         insertDocumentRaw(projectId, deviceId, copyId, content);
         return copyId;
     }
@@ -410,16 +435,20 @@ public class SyncService {
     private UUID createOrphanCopy(UUID projectId, UUID deviceId, UUID missingId, String content) {
         UUID copyId = UUID.randomUUID();
         String title = "Recovered document " + missingId.toString().substring(0, 8);
-        insertCopy(projectId, null, copyId, conflictTitle(title, deviceId), nextKeyAfter(projectId, null, null), deviceId);
+        insertCopy(projectId, null, copyId, conflictTitle(title, deviceId),
+                nextKeyAfter(projectId, null, null), deviceId, null, null);
         insertDocumentRaw(projectId, deviceId, copyId, content);
         return copyId;
     }
 
-    private void insertCopy(UUID projectId, UUID parentId, UUID id, String title, String orderKey, UUID deviceId) {
+    private void insertCopy(UUID projectId, UUID parentId, UUID id, String title, String orderKey,
+            UUID deviceId, UUID conflictOfId, Long conflictBaseVersion) {
         jdbc.sql("""
                 INSERT INTO binder_item
-                    (id, project_id, parent_id, type, title, order_key, version, updated_by_device_id)
-                VALUES (:id, :projectId, :parentId, 'document', :title, :orderKey, 1, :deviceId)
+                    (id, project_id, parent_id, type, title, order_key, version, updated_by_device_id,
+                     conflict_of_id, conflict_base_version, conflict_created_at)
+                VALUES (:id, :projectId, :parentId, 'document', :title, :orderKey, 1, :deviceId,
+                        :conflictOfId, :conflictBaseVersion, now())
                 """)
                 .param("id", id)
                 .param("projectId", projectId)
@@ -427,6 +456,8 @@ public class SyncService {
                 .param("title", title)
                 .param("orderKey", orderKey)
                 .param("deviceId", deviceId)
+                .param("conflictOfId", conflictOfId)
+                .param("conflictBaseVersion", conflictBaseVersion)
                 .update();
         recordChange(projectId, "binder_item", id, "create", deviceId);
     }

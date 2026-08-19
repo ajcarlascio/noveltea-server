@@ -10,6 +10,8 @@ public final class ConflictReason {
     public static final String DUPLICATE_CREATE = "duplicate_create";
     /** An update arrived for an entity the server no longer has. */
     public static final String ENTITY_MISSING = "entity_missing";
+    /** The change was malformed — missing or unknown entity type, id, or op. */
+    public static final String INVALID_REQUEST = "invalid_request";
     /** Entity type not yet handled by the push path. */
     public static final String NOT_IMPLEMENTED = "not_implemented";
 }

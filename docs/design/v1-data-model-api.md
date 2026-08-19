@@ -298,24 +298,23 @@ DELETE /members/:id
 
 **Impact on sync:** `GET /sync` must filter `change_log` rows by the caller's role and scope. Deletions must remain observable to scoped clients without leaking titles or the existence of out-of-scope siblings. Every entity type added to `change_log` needs its visibility rule written at the same time.
 
-### A7 — Open-core split: what is free and what is paid
+### A7 — Open-core split
 
-The product splits into a public **Core** (this repo, ELv2) and a private **Pro** repo (proprietary).
+The product splits into a public **Core** (this repo, ELv2) and a private commercial repo.
+The capability roster is not recorded in this repository; it lives in the gitignored
+`PAID-FEATURES.local.md`.
 
-| Capability | Core | Commercial |
-|---|---|---|
-| ***REDACTED*** |
-| ***REDACTED*** |
-| Export | ***REDACTED*** |
-| ***REDACTED*** |
+Gating is architectural, not licensed: **no commercial code is committed to the public
+repo**, not even disabled. Core defines two extension points — `ExportProvider` and
+`SharingProvider` — and returns `501` with an upgrade pointer for anything unimplemented.
+Sync must function with no `SharingProvider` present, taking the single-owner path.
 
-Gating is architectural, not licensed: **no Pro code is committed to the public repo**, not even disabled. Core defines two extension points — `ExportProvider` and `SharingProvider` — and returns `501` with an upgrade pointer for anything unimplemented. Sync must function with no `SharingProvider` present, taking the single-owner path.
-
-The A6 tables ship in **Core** migrations even though the feature is Pro, so that a license upgrade requires no schema migration. Core simply never writes to them.
+The A6 sharing tables ship in **Core** migrations even though the feature is commercial, so
+that a licence upgrade requires no schema migration. Core simply never writes to them.
 
 ### A8 — Export implementation: Pandoc dropped
 
-Pandoc is GPL and cannot ship inside a proprietary Pro module. It was also unnecessary — Pandoc solves an N×M format matrix; this is 1×5 from an already-structured source, so every target is serialization rather than parsing.
+Pandoc is GPL and cannot ship inside a proprietary module. It was also unnecessary — Pandoc solves an N×M format matrix; this is 1×5 from an already-structured source, so every target is serialization rather than parsing.
 
 | Format | Implementation | Licence | Difficulty |
 |---|---|---|---|
@@ -334,7 +333,7 @@ Known traps: RTF needs `\uN?` Unicode escapes with ASCII fallbacks plus declared
 
 PolyForm Noncommercial was rejected for two reasons. Its Personal Uses clause permits hobby and study use *"without any anticipated commercial application"* — but the core user is a novelist writing a book they intend to sell, so the free tier's primary use case sits in ambiguous territory. And a licence cannot gate features: under PolyForm, a self-hoster enabling paid code would not even be in violation.
 
-**Elastic License 2.0** permits everything except providing the software to third parties as a hosted or managed service, circumventing licence-key functionality, and removing notices. Users may write and sell commercially; competitors may not resell NovelTea as a service; and the licence explicitly backs the key enforcement Pro needs.
+**Elastic License 2.0** permits everything except providing the software to third parties as a hosted or managed service, circumventing licence-key functionality, and removing notices. Users may write and sell commercially; competitors may not resell NovelTea as a service; and the licence explicitly backs the key enforcement this needs.
 
 Copyright Anthony Carlascio.
 
@@ -343,6 +342,6 @@ Copyright Anthony Carlascio.
 ## Open questions to settle next
 
 1. Compile job dispatch between Spring and the Node worker — Postgres `LISTEN/NOTIFY` on a `compile_job` table avoids adding a broker, but is unproven here.
-2. Licence key issuance and verification for Pro — signing scheme, offline grace period, and what an expired key degrades to for a self-hoster.
+2. Licence key issuance and verification — signing scheme, offline grace period, and what an expired key degrades to for a self-hoster.
 3. iOS local store details: GRDB schema parity with the server subset, background sync scheduling.
 4. Comments/annotations as a first-class entity — the `commenter` role introduced in A6 currently has nothing to write to.

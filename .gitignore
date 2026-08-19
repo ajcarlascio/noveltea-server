@@ -45,3 +45,7 @@ Thumbs.db
 
 # Generated migration bundle — rebuilt by `npm run generate`
 packages/*/src/generated/
+
+# Private commercial roadmap — never commit
+PAID-FEATURES.local.md
+*.private.md
