@@ -63,7 +63,7 @@ Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is inc
 ## Data store
 
 - **Server: PostgreSQL.** The schema leans on `jsonb` + GIN (smart-collection filters; `tsvector` manuscript search), real enums, and sequence-backed sync cursors. MariaDB's `JSON` is a `LONGTEXT` alias and would need generated columns per path.
-- **Clients: SQLite** (GRDB on iOS, OPFS/wa-sqlite on web). Client schema is a subset: no `change_log`, plus a local `pending_changes` queue.
+- **Clients: SQLite** (GRDB on iOS, OPFS/wa-sqlite on web), defined once in `packages/client-db` and shared by every client. It is a *subset*, not a translation: no `change_log`, no server-owned tables, plus `sync_state` and `pending_change`. All tables are `STRICT`. **Read `packages/client-db/README.md` before touching it** — it documents every deliberate divergence from Postgres, and the two rules that cause silent data loss if broken (`PRAGMA foreign_keys` is per-connection; `pending_change` upserts must preserve `base_version`).
 - **Migrations: Liquibase with SQL-formatted changelogs, not XML.** The XML abstraction exists for cross-database portability we don't want; it fights `jsonb`, GIN, and partial indexes. Clients use plain numbered SQL migrations — no Liquibase on clients.
 
 ## Sync protocol — the core invariants
@@ -99,7 +99,8 @@ These tables live in **core** migrations even though the feature is Pro — sche
 
 - **JDK 21 (LTS)**, pinned via the Gradle toolchain in the root `build.gradle.kts` so CI and contributors never compile against a stray `PATH` JDK — Gradle provisions it if absent.
 - **Virtual threads are on** (`spring.threads.virtual.enabled: true`). Both hot paths — sync requests and compile-job dispatch — are I/O-bound waiting on Postgres or the worker, which is exactly the case they serve. Avoid `synchronized` blocks around blocking I/O; they pin the carrier thread.
-- **Gradle owns `:api` only.** The compile worker is a plain npm/TypeScript package under `worker/`, built by npm. There is no `:worker` Gradle project.
+- **Gradle owns `:api` only.** Everything Node-side is npm: shared libraries live under `packages/*` as npm workspaces, services live at the root (`worker/`). There is no `:worker` Gradle project.
+- **No build step on the Node side.** Node ≥ 22.6 strips TypeScript types natively and ships `node:sqlite`, so `packages/client-db` has zero dependencies and its tests run real SQLite. Keep it that way: a transpiler in this path buys nothing.
 - **Hibernate runs `ddl-auto: validate`.** Liquibase owns the schema; Hibernate must never alter it.
 - **One Liquibase runtime, always.** The version is whatever the Spring Boot BOM manages — deliberately not pinned separately. `io.spring.dependency-management` applies the BOM to the `liquibaseRuntime` configuration as well, so `./gradlew :api:update` and the changelogs Spring applies at startup execute the *same* Liquibase code. **Never run a standalone `liquibase` CLI against a NovelTea database**, whatever version is on `PATH`. Liquibase changes checksum computation across major versions: a CLI on a different major writes `DATABASECHANGELOG` checksums the application runtime then rejects, and the app refuses to boot against a database that is in fact correctly migrated. Recovering means hand-editing checksums in a live table. Verify the resolved version with:
   ```bash
@@ -126,6 +127,12 @@ docker compose up -d             # local Postgres 16
 ./gradlew :api:update            # apply pending changesets
 ./gradlew :api:status            # what would be applied
 ./gradlew :api:rollbackCount -PliquibaseCommandValue=1
+
+# Node side — npm workspaces at the repo root (packages/*), plus worker/
+npm install                      # once, from the root
+npm test                         # every workspace
+npm test -w @noveltea/client-db  # one workspace
+npm run generate -w @noveltea/client-db   # rebuild the migration bundle
 
 # Compile worker (npm, not Gradle)
 cd worker && npm run dev
