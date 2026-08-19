@@ -1,0 +1,23 @@
+# Tests run against a REAL Postgres in an isolated schema, never H2. The tx_id /
+# pg_snapshot_xmin visibility gate and the concurrent-commit ordering case depend on
+# genuine MVCC semantics and cannot be reproduced in-memory.
+#
+# Schema isolation is used instead of a throwaway database because the `noveltea`
+# role owns the database but lacks CREATEDB. Override the URL for CI/Testcontainers.
+spring:
+  datasource:
+    url: ${NOVELTEA_TEST_JDBC_URL:jdbc:postgresql://localhost:5432/noveltea?currentSchema=noveltea_test,public}
+    username: ${NOVELTEA_TEST_DB_USER:noveltea}
+    password: ${NOVELTEA_TEST_DB_PASSWORD:noveltea}
+  liquibase:
+    default-schema: noveltea_test
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+  jpa:
+    hibernate:
+      ddl-auto: none
+  threads:
+    virtual:
+      enabled: true
+logging:
+  level:
+    liquibase: WARN
