@@ -60,3 +60,7 @@ noveltea:
     tombstone-retention: 180d
     artifact-grace: 1d
     expired-credential-retention: 30d
+
+  account:
+    deletion-grace: 14d
+    password-reset-ttl: 1h

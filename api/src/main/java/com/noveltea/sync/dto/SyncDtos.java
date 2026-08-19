@@ -29,10 +29,14 @@ public final class SyncDtos {
      *     {@code latestId}, because the feed can no longer explain how things got here.
      */
     public record PullResponse(
-            List<ChangeRecord> changes, long latestId, boolean hasMore, boolean resyncRequired) {
+            List<ChangeRecord> changes,
+            long latestId,
+            boolean hasMore,
+            boolean resyncRequired,
+            long syncEpoch) {
 
         public PullResponse(List<ChangeRecord> changes, long latestId, boolean hasMore) {
-            this(changes, latestId, hasMore, false);
+            this(changes, latestId, hasMore, false, 1L);
         }
     }
 

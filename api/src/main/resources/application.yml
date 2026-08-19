@@ -83,3 +83,8 @@ noveltea:
     tombstone-retention: 180d
     artifact-grace: 1d
     expired-credential-retention: 30d
+
+  account:
+    # The one action taken in a bad moment that cannot be undone, so the window is wide.
+    deletion-grace: 14d
+    password-reset-ttl: 1h

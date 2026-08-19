@@ -196,6 +196,38 @@ We do not store HTML, so there is nothing to sanitise on write; the exposure is 
 
 `IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
 
+## Account lifecycle
+
+**Password reset** is two endpoints, both unauthenticated and both rate-limited. `POST /auth/password-reset` always answers 202 whether or not the address exists — a different answer would make it the account-enumeration oracle that login deliberately is not. Only the token hash is stored, requesting a new link invalidates the previous one, and confirming it **signs every device out**: someone resetting a password usually believes it was stolen, and leaving the attacker's paired phone signed in would make the reset theatre.
+
+Delivery goes through `PasswordResetDelivery`. Until mail exists, the default logs the token and says loudly that anyone who can read the logs can take the account — tolerable for a single-operator install, unacceptable for anything multi-tenant.
+
+**Account deletion is scheduled, not immediate.** `POST /account/deletion` starts a 14-day countdown that `DELETE /account/deletion` cancels; the retention sweep carries it out afterwards. This is the one action a person takes in a bad moment and cannot undo, so it gets the same treatment as trash before tombstone, applied to a whole account.
+
+- It **requires the password again** despite the caller being authenticated: a borrowed unlocked laptop must not destroy someone's novels.
+- An account pending deletion **can still sign in**, or it could never cancel. Only `deleted_at` blocks sign-in and reset.
+- Purging **deletes projects explicitly** before the user row. `project.owner_id` is `ON DELETE RESTRICT` so a stray user delete cannot quietly take a novel with it; deletion has to state that it means the projects too.
+
+## Backup and restore
+
+**Back up the database. Nothing else is the author's work.** Exports are regenerated from it on demand, and the staging directory is transient by design — neither belongs in a backup, and including them makes the backup larger and slower for no recovery value. Authors who want their own copy of a compiled manuscript take the `download` destination and keep it on their own device; that is their backup, not the server's.
+
+```bash
+pg_dump --format=custom noveltea > noveltea-$(date +%F).dump
+```
+
+`DATABASECHANGELOG` is included, so migrations do not re-run on restore; if the dump predates the code, pending ones apply at startup. For point-in-time recovery, use WAL archiving rather than more frequent dumps.
+
+**After restoring, bump the epoch.** This is not optional:
+
+```sql
+UPDATE project SET sync_epoch = sync_epoch + 1;
+```
+
+A restore rewinds `change_log`, but every device keeps a cursor past the restored maximum. Without a bump they pull, receive nothing, and conclude they are up to date — while the server has rolled back underneath them. The local copy silently becomes the only complete one and nothing detects the divergence. `change_log_purged_below` cannot catch this: it detects a cursor that is too *low*, not a server that moved backwards.
+
+Clients echo the epoch on every pull; a mismatch returns `resyncRequired` and they rebuild from the binder and documents.
+
 ## Limits and admission control
 
 - **Rate limiting covers credential endpoints only** (`login`, `register`, `refresh`, `pair`). Sync is deliberately untouched: a first sync fetches every document and a resync rebuilds from scratch, so a client legitimately makes hundreds of requests in seconds. Any rate low enough to deter guessing would break exactly those flows. Verified live: 200 rapid pulls and 150 item creations all served, while the 11th login attempt is refused.

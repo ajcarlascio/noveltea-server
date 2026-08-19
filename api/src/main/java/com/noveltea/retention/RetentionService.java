@@ -1,5 +1,6 @@
 package com.noveltea.retention;
 
+import com.noveltea.account.AccountService;
 import com.noveltea.compile.CompileProperties;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,12 +32,17 @@ public class RetentionService {
     private final JdbcClient jdbc;
     private final RetentionProperties properties;
     private final CompileProperties compileProperties;
+    private final AccountService accounts;
 
     public RetentionService(
-            JdbcClient jdbc, RetentionProperties properties, CompileProperties compileProperties) {
+            JdbcClient jdbc,
+            RetentionProperties properties,
+            CompileProperties compileProperties,
+            AccountService accounts) {
         this.jdbc = jdbc;
         this.properties = properties;
         this.compileProperties = compileProperties;
+        this.accounts = accounts;
     }
 
     public record SweepReport(
@@ -45,10 +51,13 @@ public class RetentionService {
             int compileJobs,
             int artifactFiles,
             int pairingCodes,
-            int invitations) {
+            int invitations,
+            int deletedAccounts,
+            int passwordResets) {
 
         public int total() {
-            return changeLogRows + tombstones + compileJobs + artifactFiles + pairingCodes + invitations;
+            return changeLogRows + tombstones + compileJobs + artifactFiles
+                    + pairingCodes + invitations + deletedAccounts + passwordResets;
         }
     }
 
@@ -65,7 +74,9 @@ public class RetentionService {
                 purgeFinishedCompileJobs(),
                 artifacts,
                 purgeSpentPairingCodes(),
-                purgeDeadInvitations());
+                purgeDeadInvitations(),
+                accounts.purgeDueDeletions(),
+                purgeSpentPasswordResets());
     }
 
     private List<UUID> projectIds() {
@@ -218,6 +229,19 @@ public class RetentionService {
         OffsetDateTime cutoff = OffsetDateTime.now().minus(properties.expiredCredentialRetention());
         return jdbc.sql("""
                 DELETE FROM pairing_code
+                 WHERE (consumed_at IS NOT NULL AND consumed_at < :cutoff)
+                    OR (consumed_at IS NULL AND expires_at < :cutoff)
+                """)
+                .param("cutoff", cutoff)
+                .update();
+    }
+
+    /** A spent or expired reset token is a credential; keeping it serves nobody. */
+    @Transactional
+    public int purgeSpentPasswordResets() {
+        OffsetDateTime cutoff = OffsetDateTime.now().minus(properties.expiredCredentialRetention());
+        return jdbc.sql("""
+                DELETE FROM password_reset
                  WHERE (consumed_at IS NOT NULL AND consumed_at < :cutoff)
                     OR (consumed_at IS NULL AND expires_at < :cutoff)
                 """)

@@ -40,6 +40,10 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             case "/api/v1/auth/login" -> properties.loginAttemptsPerWindow();
             case "/api/v1/auth/register" -> properties.registrationsPerWindow();
             case "/api/v1/auth/pair", "/api/v1/auth/refresh" -> properties.pairingAttemptsPerWindow();
+            // Both halves of a reset are credential endpoints: one mints a token, the
+            // other spends one.
+            case "/api/v1/auth/password-reset", "/api/v1/auth/password-reset/confirm" ->
+                    properties.loginAttemptsPerWindow();
             default -> null;
         };
     }

@@ -39,10 +39,16 @@ class IdorSweepTest extends AbstractPostgresTest {
 
     private static final String PASSWORD = "correct horse battery staple";
 
-    /** Public by design: these are the only way to obtain a token in the first place. */
+    /**
+     * Public by design: obtaining a token, or recovering an account when you cannot.
+     *
+     * <p>Listed rather than pattern-matched, so adding a route under /auth does not become
+     * public by accident — a new one fails this sweep until someone states the intent.
+     */
     private static final Set<String> PUBLIC_PATHS = Set.of(
             "/api/v1/auth/register", "/api/v1/auth/login",
-            "/api/v1/auth/refresh", "/api/v1/auth/pair");
+            "/api/v1/auth/refresh", "/api/v1/auth/pair",
+            "/api/v1/auth/password-reset", "/api/v1/auth/password-reset/confirm");
 
     @Autowired MockMvc mvc;
     @Autowired AuthService auth;
