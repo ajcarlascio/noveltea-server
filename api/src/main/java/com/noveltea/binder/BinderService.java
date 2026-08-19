@@ -67,7 +67,12 @@ public class BinderService {
             requireSameProject(projectId, parentId);
         }
         UUID id = UUID.randomUUID();
-        String orderKey = orderKeyFor(projectId, parentId, afterSiblingId, null);
+        // A new item goes at the END of its parent by default. Passing no sibling used to
+        // mean "before everything", so adding a chapter put it above chapter one — which is
+        // never what an author means. `move` keeps the old reading: a null sibling there is
+        // an explicit request to move something to the top.
+        UUID anchor = afterSiblingId != null ? afterSiblingId : lastChildOf(projectId, parentId);
+        String orderKey = orderKeyFor(projectId, parentId, anchor, null);
 
         jdbc.sql("""
                 INSERT INTO binder_item (id, project_id, parent_id, type, title, order_key, updated_by_device_id)
@@ -303,13 +308,21 @@ public class BinderService {
                 .query(Boolean.class).single());
     }
 
-    private UUID lastRootChild(UUID projectId) {
+    /** The last live child of a parent, or null when it has none. */
+    private UUID lastChildOf(UUID projectId, UUID parentId) {
         return jdbc.sql("""
                 SELECT id FROM binder_item
-                 WHERE project_id = :projectId AND parent_id IS NULL AND deleted_at IS NULL
+                 WHERE project_id = :projectId
+                   AND parent_id IS NOT DISTINCT FROM CAST(:parentId AS uuid)
+                   AND deleted_at IS NULL
                  ORDER BY order_key DESC LIMIT 1
                 """)
-                .param("projectId", projectId).query(UUID.class).optional().orElse(null);
+                .param("projectId", projectId).param("parentId", parentId)
+                .query(UUID.class).optional().orElse(null);
+    }
+
+    private UUID lastRootChild(UUID projectId) {
+        return lastChildOf(projectId, null);
     }
 
     /** Computes an ordering key placing an item after {@code afterSiblingId}. */

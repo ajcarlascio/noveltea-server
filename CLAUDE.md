@@ -196,6 +196,18 @@ We do not store HTML, so there is nothing to sanitise on write; the exposure is 
 
 `IdorSweepTest` enumerates every route from the handler mapping and drives it with a stranger's token: routes naming another account's resource must not answer 2xx, caller-scoped collections must answer without containing the victim's data, and nothing may answer 500. Because it reads the mapping rather than a hand-written list, a new controller method that forgets its check fails it immediately.
 
+## Compile pipeline
+
+`POST /projects/{id}/compile` queues a `compile_job` and returns immediately. The Node worker in `worker/` claims it, renders it with `@noveltea/compile`, writes the artifact and records the result. `GET /compile-jobs/{id}` reports status; `/download` streams the file.
+
+- **The author picks a destination per compile.** `download` stages the file briefly and expires it; `server` writes to the operator's mounted path and keeps it; `cloud` is commercial and a Core build answers `501`. `DestinationProvider` is the extension point, shaped like `ExportProvider`.
+- **The worker reads Postgres directly.** It must, because it owns the document schema and the JVM never interprets document structure. It claims with `FOR UPDATE SKIP LOCKED`, so running several workers needs no coordination and a crashed one blocks nobody.
+- **`pg_notify` is sent inside the submitting transaction.** Postgres holds notifications until commit, so the worker cannot wake before the row it is being told about is visible. Polling is a fallback for anything missed, not the primary path.
+- **A failed job backs off** (`next_attempt_at`) rather than being re-claimed on the next pass. Without it a drain spends every retry in milliseconds, which is useless for the transient faults retrying exists for.
+- **Download paths are re-validated against the configured roots** before anything is streamed. A corrupted or tampered `output_path` must not become an arbitrary file read.
+
+Run it with `NOVELTEA_DB_URL`, `NOVELTEA_EXPORT_PATH` and `NOVELTEA_STAGING_PATH`; the API needs the same two paths under `noveltea.compile.*`.
+
 ## Compile
 
 `packages/compile` turns ProseMirror documents into the formats Core ships (`txt`, `md`, `html`). `ExportProvider` on the Java side reports the same boundary; a commercial module contributes the remaining formats by supplying another implementation, and Core must keep working with only its own provider present.
