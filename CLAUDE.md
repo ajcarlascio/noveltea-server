@@ -147,6 +147,14 @@ cd worker && npm run dev
 cd worker && npm test -- src/export/epub.test.ts     # single test file
 ```
 
+## Structural moves are serialised per project
+
+`BinderService.move` takes a transaction-scoped advisory lock on the project before it checks for a cycle.
+
+The check reads the tree and then writes. Without the lock, two devices moving A under B and B under A at the same instant both pass against a pre-move snapshot and both commit, leaving a subtree that points at itself — present in the database, absent from every client, because every read walks down from the roots. Row locks cannot express this: the rows a cycle would involve are not known until after the read.
+
+Moves are rare and brief, so serialising them costs nothing measurable next to losing a subtree. `BinderMoveCycleRaceTest` reproduces the race and fails on every repetition when the lock is removed.
+
 ## Binder tree semantics
 
 `BinderService` owns structural operations. Two rules that are not obvious from the schema:

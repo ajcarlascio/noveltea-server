@@ -115,6 +115,19 @@ public class BinderService {
         Objects.requireNonNull(itemId, "itemId");
         UUID projectId = requireProjectOf(itemId);
 
+        // Serialise structural moves within a project.
+        //
+        // The cycle check reads the tree and then writes. Without this, two devices moving
+        // A under B and B under A at the same instant both pass against a pre-move snapshot
+        // and both commit, leaving a subtree that points at itself: it exists in the
+        // database and appears nowhere in the binder, because every read walks down from
+        // the roots. Row locks cannot express "no other move may reorder this tree", since
+        // the rows a cycle would involve are not known until after the read.
+        //
+        // Held to the end of the transaction and scoped to one project. Moves are rare and
+        // brief, so the contention is negligible next to losing a subtree.
+        lockProjectTree(projectId);
+
         if (newParentId != null) {
             requireSameProject(projectId, newParentId);
             if (wouldCycle(itemId, newParentId)) {
@@ -278,6 +291,14 @@ public class BinderService {
     private Optional<UUID> findTrash(UUID projectId) {
         return jdbc.sql("SELECT id FROM binder_item WHERE project_id = :projectId AND type = 'trash'")
                 .param("projectId", projectId).query(UUID.class).optional();
+    }
+
+    /** Advisory, transaction-scoped, and keyed on the project rather than any row. */
+    private void lockProjectTree(UUID projectId) {
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(:key))")
+                .param("key", "binder-tree:" + projectId)
+                .query()
+                .listOfRows();
     }
 
     private boolean wouldCycle(UUID itemId, UUID candidateParentId) {

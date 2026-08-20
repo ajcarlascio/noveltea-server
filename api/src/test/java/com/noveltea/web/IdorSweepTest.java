@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.noveltea.auth.AuthService;
 import com.noveltea.auth.AuthService.Session;
 import com.noveltea.binder.BinderService;
+import com.noveltea.comment.CommentService;
+import com.noveltea.snapshot.SnapshotService;
 import com.noveltea.support.AbstractPostgresTest;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,6 +55,8 @@ class IdorSweepTest extends AbstractPostgresTest {
     @Autowired MockMvc mvc;
     @Autowired AuthService auth;
     @Autowired BinderService binder;
+    @Autowired SnapshotService snapshots;
+    @Autowired CommentService comments;
     @Autowired ObjectMapper mapper;
     @Autowired RequestMappingHandlerMapping handlerMapping;
 
@@ -61,6 +65,21 @@ class IdorSweepTest extends AbstractPostgresTest {
     }
 
     private record Route(HttpMethod method, String pattern) {}
+
+    /** Every path variable the API uses. A new one must be added here, not skipped. */
+    private static String fill(
+            String pattern, UUID projectId, UUID itemId, UUID deviceId,
+            UUID snapshotId, UUID commentId, UUID jobId) {
+        return pattern
+                .replace("{projectId}", projectId.toString())
+                .replace("{itemId}", itemId.toString())
+                .replace("{documentId}", itemId.toString())
+                .replace("{copyId}", itemId.toString())
+                .replace("{deviceId}", deviceId.toString())
+                .replace("{snapshotId}", snapshotId.toString())
+                .replace("{commentId}", commentId.toString())
+                .replace("{jobId}", jobId.toString());
+    }
 
     /** Every route the application actually exposes, minus the public auth endpoints. */
     private List<Route> mappedRoutes() {
@@ -93,22 +112,30 @@ class IdorSweepTest extends AbstractPostgresTest {
         jdbc.sql("INSERT INTO document (id, content) VALUES (:id, '{\"type\":\"doc\"}'::jsonb)")
                 .param("id", itemId).update();
 
+        UUID snapshotId = snapshots.capture(itemId, "their milestone", false, victim.deviceId());
+        UUID commentId = comments.create(itemId, victim.userId(), victim.deviceId(),
+                "their private note", null, null);
+        UUID jobId = UUID.randomUUID();
+        jdbc.sql("""
+                INSERT INTO compile_job (id, project_id, inline_config, format, destination, status)
+                VALUES (:id, :p, '{}'::jsonb, 'md', 'download', 'queued')
+                """).param("id", jobId).param("p", projectId).update();
+
         Session stranger = register();
         List<Route> routes = mappedRoutes();
         assertThat(routes).as("the sweep must actually find routes").isNotEmpty();
 
         List<String> leaks = new ArrayList<>();
         List<String> selfScoped = new ArrayList<>();
+        List<String> unfillable = new ArrayList<>();
 
         for (Route route : routes) {
             boolean targetsVictim = route.pattern().contains("{");
-            String path = route.pattern()
-                    .replace("{projectId}", projectId.toString())
-                    .replace("{itemId}", itemId.toString())
-                    .replace("{copyId}", itemId.toString())
-                    .replace("{deviceId}", victim.deviceId().toString());
+            String path = fill(route.pattern(), projectId, itemId, victim.deviceId(),
+                    snapshotId, commentId, jobId);
             if (path.contains("{")) {
-                continue; // a path variable this sweep does not know how to fill
+                unfillable.add(route.method() + " " + route.pattern());
+                continue;
             }
 
             MvcResult result = mvc.perform(MockMvcRequestBuilders.request(route.method(), path)
@@ -149,6 +176,13 @@ class IdorSweepTest extends AbstractPostgresTest {
                 .as("the sweep must have exercised the caller-scoped collections too")
                 .isNotEmpty();
 
+        // Silently skipping a route it cannot fill is how this test quietly stops covering
+        // anything: eight routes went unswept that way, four of them added the same week.
+        assertThat(unfillable)
+                .as("""
+                    these routes were skipped because the sweep cannot fill their path                     variables, so nothing checks their authorization. Teach fill() about                     them rather than leaving them unswept.""")
+                .isEmpty();
+
         // Nothing the sweep did may have altered the victim's project.
         assertThat(jdbc.sql("SELECT title FROM project WHERE id = :id AND deleted_at IS NULL")
                 .param("id", projectId).query(String.class).optional())
@@ -162,12 +196,10 @@ class IdorSweepTest extends AbstractPostgresTest {
     @DisplayName("no route is reachable without a token at all")
     void anonymousCannotReachAnyRoute() throws Exception {
         for (Route route : mappedRoutes()) {
-            String path = route.pattern()
-                    .replace("{projectId}", UUID.randomUUID().toString())
-                    .replace("{itemId}", UUID.randomUUID().toString())
-                    .replace("{copyId}", UUID.randomUUID().toString())
-                    .replace("{deviceId}", UUID.randomUUID().toString());
-            if (path.contains("{")) continue;
+            String path = fill(route.pattern(), UUID.randomUUID(), UUID.randomUUID(),
+                    UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+            assertThat(path).as("%s has an unfillable path variable", route.pattern())
+                    .doesNotContain("{");
 
             MvcResult result = mvc.perform(MockMvcRequestBuilders.request(route.method(), path)
                             .contentType(MediaType.APPLICATION_JSON).content("{}"))

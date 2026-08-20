@@ -112,8 +112,6 @@ Honest status. None is fixed by pretending otherwise.
 
 | Issue | Impact |
 |---|---|
-| **Concurrent moves can still build a cycle** | `move` checks for a cycle then updates without locking either item. Two devices moving A under B and B under A simultaneously can both pass and commit, detaching a subtree. The existing concurrency test races the same item, which cannot cycle. |
-| **`IdorSweepTest` skips routes it cannot fill** | Path variables other than project/item/copy/device are silently skipped, so eight routes are unswept. Their checks were verified by hand; nothing would catch the next one. |
 | **Restore and merge do not refresh `search_text`** | After restoring a snapshot, search still matches the discarded revision's words. Only clients can produce `search_text`, so it stays stale until that document is next edited. |
 | **`maxDocumentBytes` is unenforced on the document path** | It applies to spec-driven entities only; a single document can reach the 32MB request ceiling. |
 | **`maxTitleLength` is unused** | A binder title created through sync is unbounded. |
