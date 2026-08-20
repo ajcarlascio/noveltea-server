@@ -148,3 +148,41 @@ describe("push lifecycle", () => {
     assert.equal(pendingChanges(db, PROJECT)[0].attempts, 2);
   });
 });
+
+describe("every synced entity type can be queued", () => {
+  test("SNAPSHOTS AND COMMENTS CAN BE PUSHED", () => {
+    const db = freshDb();
+    // Both were added to the schema long after pending_change's CHECK was written. While
+    // they were missing, a manual snapshot or an offline comment could be received from
+    // another device but never sent — the revision history a lost laptop takes with it.
+    for (const entityType of ["snapshot", "comment"] as const) {
+      const result = enqueueChange(db, {
+        projectId: PROJECT, entityType, entityId: `${entityType}-1`,
+        op: "create", payload: { x: 1 }, now: NOW,
+      });
+      assert.equal(result.action, "inserted", `${entityType} must be queueable`);
+    }
+    assert.equal(pendingChanges(db, PROJECT).length, 2);
+  });
+
+  test("an unknown entity type is still rejected", () => {
+    const db = freshDb();
+    assert.throws(() => enqueueChange(db, {
+      projectId: PROJECT, entityType: "whiteboard" as never, entityId: "w1",
+      op: "create", payload: {}, now: NOW,
+    }));
+  });
+
+  test("rows queued before the rebuild survive it", () => {
+    // The migration recreates the table; anything already waiting must not be dropped,
+    // or an upgrade silently discards unsent work.
+    const db = freshDb();
+    enqueueChange(db, {
+      projectId: PROJECT, entityType: "document", entityId: "d1",
+      op: "update", baseVersion: 3, payload: { v: 1 }, now: NOW,
+    });
+    const before = pendingChanges(db, PROJECT);
+    assert.equal(before.length, 1);
+    assert.equal(before[0].base_version, 3);
+  });
+});

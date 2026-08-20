@@ -50,7 +50,7 @@ describe("what gets converted", () => {
     assert.ok(plan.warnings.some((w) => w.code === "notes_not_exported"));
   });
 
-  test("trashed items are excluded and reported", () => {
+  test("TOMBSTONED items are excluded and reported", () => {
     const plan = planCompile([
       document("a", "Cut Chapter", doc(para(text("abandoned draft"))), { deletedAt: "2026-08-19T00:00:00Z" }),
       document("b", "Kept", doc(para(text("kept prose")))),
@@ -60,6 +60,45 @@ describe("what gets converted", () => {
     const warning = plan.warnings.find((w) => w.code === "excluded_trashed");
     assert.ok(warning);
     assert.equal(warning.itemId, "a");
+  });
+
+  test("ITEMS IN THE TRASH ARE EXCLUDED — trashing sets no deletedAt", () => {
+    // Trashing is a reparent, not a deleted_at write, so a discarded chapter looks like an
+    // ordinary live document. A check that only reads deletedAt misses it entirely and the
+    // cut scene lands in the manuscript — first, if the trash node sorts first.
+    const plan = planCompile([
+      { id: "trash", title: "Trash", type: "trash", orderKey: "a", parentId: null },
+      document("cut", "Discarded", doc(para(text("SECRET abandoned draft"))),
+        { parentId: "trash", orderKey: "a" }),
+      document("kept", "Kept", doc(para(text("kept prose"))), { orderKey: "b" }),
+    ]);
+
+    assert.deepEqual(plan.included.map((i) => i.id), ["kept"]);
+    assert.doesNotMatch(JSON.stringify(plan.included), /SECRET/);
+    assert.ok(plan.warnings.some((w) => w.code === "excluded_trashed" && w.itemId === "cut"));
+  });
+
+  test("a deeply nested trashed item is excluded too", () => {
+    const plan = planCompile([
+      { id: "trash", title: "Trash", type: "trash", orderKey: "a", parentId: null },
+      folder("act", "Discarded Act", { parentId: "trash", orderKey: "a" }),
+      document("scene", "Deep Cut", doc(para(text("SECRET nested draft"))),
+        { parentId: "act", orderKey: "a" }),
+      document("kept", "Kept", doc(para(text("kept prose"))), { orderKey: "b" }),
+    ]);
+
+    assert.deepEqual(plan.included.map((i) => i.id), ["kept"]);
+    assert.doesNotMatch(JSON.stringify(plan.included), /SECRET/);
+  });
+
+  test("a trash node with nothing in it produces no spurious warnings", () => {
+    const plan = planCompile([
+      { id: "trash", title: "Trash", type: "trash", orderKey: "a", parentId: null },
+      document("kept", "Kept", doc(para(text("kept prose"))), { orderKey: "b" }),
+    ]);
+
+    assert.deepEqual(plan.included.map((i) => i.id), ["kept"]);
+    assert.ok(!plan.warnings.some((w) => w.code === "excluded_trashed"));
   });
 
   test("an empty document is excluded rather than emitting a blank section", () => {
