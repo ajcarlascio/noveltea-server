@@ -31,6 +31,17 @@ spring:
 server:
   port: ${PORT:8080}
 
+# The generated spec (/v3/api-docs) is a full map of every route and schema. Off by
+# default: a self-hosted instance may face the open internet, and publishing that map
+# to anyone unauthenticated is a real choice, not a harmless default. An operator who
+# wants it — or the interactive explorer at /swagger-ui.html — turns both on explicitly.
+springdoc:
+  api-docs:
+    enabled: ${NOVELTEA_API_DOCS_ENABLED:false}
+  swagger-ui:
+    enabled: ${NOVELTEA_API_DOCS_ENABLED:false}
+    path: /swagger-ui.html
+
 noveltea:
   auth:
     # No default on purpose: a fallback signing key is a fallback that reaches

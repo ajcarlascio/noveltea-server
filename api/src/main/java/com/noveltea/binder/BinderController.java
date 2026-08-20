@@ -2,6 +2,7 @@ package com.noveltea.binder;
 
 import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1")
+@Tag(name = "Binder", description = "The document/folder tree: create, rename, move, trash and restore.")
 public class BinderController {
 
     private final BinderService binder;

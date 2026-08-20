@@ -2,6 +2,8 @@ package com.noveltea.auth;
 
 import com.noveltea.auth.AuthService.DeviceInfo;
 import com.noveltea.auth.AuthService.Session;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -11,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1")
+@Tag(name = "Auth", description = "Registration, login, device pairing, and the devices a session can see.")
 public class AuthController {
 
     private final AuthService auth;
@@ -34,6 +37,12 @@ public class AuthController {
         }
     }
 
+    @Operation(
+            summary = "Register a new account",
+            description = "Public — this and login are the only ways to obtain a token. "
+                    + "Every auth failure elsewhere in this API returns one identical message, "
+                    + "so a caller cannot distinguish \"no such account\" from \"wrong password\".",
+            security = {})
     @PostMapping("/auth/register")
     @ResponseStatus(HttpStatus.CREATED)
     public SessionResponse register(@RequestBody CredentialsRequest request) {
@@ -41,18 +50,29 @@ public class AuthController {
                 request.email(), request.password(), request.deviceName(), request.platform()));
     }
 
+    @Operation(summary = "Log in", description = "Public.", security = {})
     @PostMapping("/auth/login")
     public SessionResponse login(@RequestBody CredentialsRequest request) {
         return SessionResponse.of(auth.login(
                 request.email(), request.password(), request.deviceName(), request.platform()));
     }
 
+    @Operation(
+            summary = "Rotate a refresh token",
+            description = "Public. Refresh tokens rotate on every use and are single-use: a "
+                    + "leaked token works at most once, and the legitimate device's next refresh "
+                    + "failing is a detectable signal that it was stolen.",
+            security = {})
     @PostMapping("/auth/refresh")
     public SessionResponse refresh(@RequestBody RefreshRequest request) {
         return SessionResponse.of(auth.refresh(request.refreshToken()));
     }
 
-    /** Redeems a pairing code minted by an already-trusted device. */
+    @Operation(
+            summary = "Redeem a pairing code",
+            description = "Public. Redeems a short code minted by an already-trusted device "
+                    + "(see POST /auth/pairing-codes) to onboard a second one.",
+            security = {})
     @PostMapping("/auth/pair")
     public SessionResponse pair(@RequestBody PairRequest request) {
         return SessionResponse.of(auth.pair(request.code(), request.deviceName(), request.platform()));

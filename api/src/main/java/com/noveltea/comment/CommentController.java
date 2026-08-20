@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
 import com.noveltea.comment.CommentService.Comment;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -13,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1")
+@Tag(name = "Comments", description = "Anchored annotations and replies on a document.")
 public class CommentController {
 
     private final CommentService comments;
