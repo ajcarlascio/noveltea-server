@@ -352,6 +352,16 @@ Tests parse HTML output with an independent parser rather than comparing it to a
 - **Closed value sets are enums in `com.noveltea.model`**, each with a `wire()` form matching its `text` column and CHECK constraint. Adding a value means editing one enum, not hunting string literals. Do not reintroduce bare string comparisons for entity types, ops, formats, roles or platforms.
 - **Numeric bounds live in `LimitProperties`** (`noveltea.limits.*`), not as private static fields. A deployment can change them, and two services cannot disagree about the same bound.
 
+## A reparent over sync is a move
+
+`SyncService.applyBinderItem` writes `parent_id` directly, so it must run the same guards `BinderService.move` runs — it calls `requireReparentIsSafe`, which takes the project tree lock, refuses a parent in another project, and refuses a cycle.
+
+**Do not reimplement those checks here.** The push path originally did its own raw `UPDATE ... SET parent_id`, and a single request could point an item at its own descendant: the subtree then has no root, so it renders nowhere on any device — and the change propagates through `change_log`, orphaning it everywhere at once. One request, an author's manuscript unreachable on every machine they own. A second copy of the rules is a second copy that drifts, which is precisely how that happened.
+
+## A failing change is one conflict, never a failed batch
+
+`push` catches per change. The hand-written paths build SQL directly, so a constraint violation or a refused reparent arrives as an exception; uncaught, it escaped the loop as a 500 while earlier changes had already committed in their own transactions. The client got no `applied` list, and its retry turned every accepted change into a spurious conflict copy. Only messages we authored are echoed back — database text carries SQL and column names.
+
 ## Push writes must be scoped to the project
 
 A push is authorized on the project in its path. That proves the caller may write to **this** project — not that the entity id they sent belongs to it. **Every read and write in the push path therefore carries a project scope**, and `SyncEntitySpec.scopeClause()` supplies it for spec-driven entities (through `collection` or `binder_item` for the two tables with no `project_id` of their own; it throws rather than emit an unscoped statement for a type nobody has scoped).
