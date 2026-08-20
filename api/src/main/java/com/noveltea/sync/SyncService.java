@@ -386,7 +386,33 @@ public class SyncService {
                 String anchor = change.data() != null && change.data().hasNonNull("anchor")
                         ? change.data().get("anchor").toString()
                         : null;
+
+                // A reply must belong to a thread on this same document. Unvalidated, a
+                // client could attach a reply to any comment id it could name — including
+                // one in another account, where it would appear as though a stranger had
+                // joined a private conversation. The REST path already enforces this; a
+                // reply arriving over sync is the same operation.
                 UUID parent = optionalUuid(change, "parent_comment_id");
+                if (parent != null) {
+                    boolean sameThread = Boolean.TRUE.equals(jdbc.sql("""
+                            SELECT EXISTS (
+                                SELECT 1 FROM comment
+                                 WHERE id = :parentId
+                                   AND project_id = :projectId
+                                   AND document_id = :documentId
+                                   AND deleted_at IS NULL)
+                            """)
+                            .param("parentId", parent)
+                            .param("projectId", projectId)
+                            .param("documentId", documentId)
+                            .query(Boolean.class).single());
+                    if (!sameThread) {
+                        conflicts.add(new ConflictRecord(change.entityId(), "comment",
+                                ConflictReason.INVALID_REQUEST, null, null,
+                                "parent_comment_id does not refer to a thread on this document"));
+                        return;
+                    }
+                }
 
                 jdbc.sql("""
                         INSERT INTO comment
@@ -788,8 +814,13 @@ public class SyncService {
                        version = :next,
                        updated_by_device_id = :deviceId,
                        updated_at = now()
-                 WHERE id = :id
+                 -- Scoped as well as gated. The SELECT above already refuses a foreign
+                 -- item, so this is defence in depth — but the gate and the write being
+                 -- separate statements is exactly the shape that rots when someone adds a
+                 -- path that skips one of them.
+                 WHERE id = :id AND project_id = :projectId
                 """)
+                .param("projectId", projectId)
                 .param("title", optionalText(change, "title"))
                 .param("parentId", optionalUuid(change, "parent_id"))
                 .param("orderKey", optionalText(change, "order_key"))

@@ -358,6 +358,12 @@ Tests parse HTML output with an independent parser rather than comparing it to a
 
 **Do not reimplement those checks here.** The push path originally did its own raw `UPDATE ... SET parent_id`, and a single request could point an item at its own descendant: the subtree then has no root, so it renders nowhere on any device — and the change propagates through `change_log`, orphaning it everywhere at once. One request, an author's manuscript unreachable on every machine they own. A second copy of the rules is a second copy that drifts, which is precisely how that happened.
 
+## Thread integrity for comments over sync
+
+A reply's `parent_comment_id` must name a live thread **on the same document in the same project**. Unvalidated, a client could attach a reply to any comment id it could name — including one in another account, where it would surface inside a private conversation as though a stranger had joined it. The REST path always enforced this; the sync path did not, which is the same "second door, no guard" shape as the reparent defect above.
+
+**Whenever an operation exists on both a REST endpoint and the sync push path, the rules belong in one place and both call it.** Every defect found in this area so far has been a hand-written push path reimplementing — and under-implementing — something a service already did correctly.
+
 ## A failing change is one conflict, never a failed batch
 
 `push` catches per change. The hand-written paths build SQL directly, so a constraint violation or a refused reparent arrives as an exception; uncaught, it escaped the loop as a 500 while earlier changes had already committed in their own transactions. The client got no `applied` list, and its retry turned every accepted change into a spurious conflict copy. Only messages we authored are echoed back — database text carries SQL and column names.
