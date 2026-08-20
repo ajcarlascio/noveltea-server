@@ -344,6 +344,14 @@ Tests parse HTML output with an independent parser rather than comparing it to a
 - **Closed value sets are enums in `com.noveltea.model`**, each with a `wire()` form matching its `text` column and CHECK constraint. Adding a value means editing one enum, not hunting string literals. Do not reintroduce bare string comparisons for entity types, ops, formats, roles or platforms.
 - **Numeric bounds live in `LimitProperties`** (`noveltea.limits.*`), not as private static fields. A deployment can change them, and two services cannot disagree about the same bound.
 
+## Push writes must be scoped to the project
+
+A push is authorized on the project in its path. That proves the caller may write to **this** project — not that the entity id they sent belongs to it. **Every read and write in the push path therefore carries a project scope**, and `SyncEntitySpec.scopeClause()` supplies it for spec-driven entities (through `collection` or `binder_item` for the two tables with no `project_id` of their own; it throws rather than emit an unscoped statement for a type nobody has scoped).
+
+This was a real, exploitable defect, not a hypothetical. Without the scope, an id learned from an export filename or a bug report was enough to overwrite another author's chapter, reparent their folder so the subtree vanished from their binder, or delete their snapshots — and because `change_log` was written against the *attacker's* project, the victim's own devices never learned anything had happened.
+
+`document` has no `project_id`; it is scoped through its `binder_item`. `SyncTenantIsolationTest` pins each case and fails if any scope is removed.
+
 ## Synced data entity types
 
 `SyncEntitySpec` declares taxonomy, custom metadata, collections and compile presets: their columns, types, required fields, parent references and cross-field invariants. `SyncEntityWriter` validates against it before building any statement.

@@ -146,6 +146,28 @@ public record SyncEntitySpec(
         return ALL;
     }
 
+    /**
+     * SQL restricting a row to one project.
+     *
+     * <p>Authorizing the push covers the project in the path, not the row the caller named.
+     * Every read and write in the push path carries this, or knowing an id is enough to
+     * reach another account's data. Tables without their own project_id are scoped through
+     * whichever parent carries it.
+     */
+    public String scopeClause() {
+        if (hasProjectId) {
+            return " AND project_id = :scopeProjectId";
+        }
+        return switch (type) {
+            case COLLECTION_ITEM ->
+                    " AND collection_id IN (SELECT id FROM collection WHERE project_id = :scopeProjectId)";
+            case CUSTOM_METADATA_VALUE ->
+                    " AND binder_item_id IN (SELECT id FROM binder_item WHERE project_id = :scopeProjectId)";
+            default -> throw new IllegalStateException(
+                    "no project scope defined for " + type + "; refusing to run an unscoped write");
+        };
+    }
+
     public Optional<ColumnSpec> column(String name) {
         return columns.stream().filter(c -> c.column().equals(name)).findFirst();
     }

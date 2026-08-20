@@ -92,10 +92,12 @@ public class SyncEntityWriter {
         long next = currentVersion + 1;
         String sql = "UPDATE " + spec.table() + " SET "
                 + (assignments.isEmpty() ? "" : assignments + ", ")
-                + "version = :nextVersion, updated_by_device_id = :deviceId, updated_at = now() WHERE id = :id";
+                + "version = :nextVersion, updated_by_device_id = :deviceId, updated_at = now()"
+                + " WHERE id = :id" + spec.scopeClause();
 
         var statement = jdbc.sql(sql)
                 .param("id", entityId)
+                .param("scopeProjectId", projectId)
                 .param("deviceId", deviceId)
                 .param("nextVersion", next);
         for (var entry : values.entrySet()) {
@@ -106,24 +108,28 @@ public class SyncEntityWriter {
     }
 
     /** Soft delete where the table supports it, hard delete where it does not. */
-    public void delete(EntityType type, UUID entityId, UUID deviceId) {
+    public void delete(UUID projectId, EntityType type, UUID entityId, UUID deviceId) {
         SyncEntitySpec spec = require(type);
         boolean soft = spec.column("deleted_at").isPresent();
         if (soft) {
             jdbc.sql("UPDATE " + spec.table()
                             + " SET deleted_at = now(), version = version + 1,"
                             + " updated_by_device_id = :deviceId, updated_at = now()"
-                            + " WHERE id = :id AND deleted_at IS NULL")
-                    .param("deviceId", deviceId).param("id", entityId).update();
+                            + " WHERE id = :id AND deleted_at IS NULL" + spec.scopeClause())
+                    .param("deviceId", deviceId).param("id", entityId)
+                    .param("scopeProjectId", projectId).update();
         } else {
-            jdbc.sql("DELETE FROM " + spec.table() + " WHERE id = :id").param("id", entityId).update();
+            jdbc.sql("DELETE FROM " + spec.table() + " WHERE id = :id" + spec.scopeClause())
+                    .param("id", entityId).param("scopeProjectId", projectId).update();
         }
     }
 
-    public Optional<Long> currentVersion(EntityType type, UUID entityId) {
+    /** Scoped: an entity outside this project must look absent, not merely unwritable. */
+    public Optional<Long> currentVersion(UUID projectId, EntityType type, UUID entityId) {
         SyncEntitySpec spec = require(type);
-        return jdbc.sql("SELECT version FROM " + spec.table() + " WHERE id = :id")
-                .param("id", entityId).query(Long.class).optional();
+        return jdbc.sql("SELECT version FROM " + spec.table() + " WHERE id = :id" + spec.scopeClause())
+                .param("id", entityId).param("scopeProjectId", projectId)
+                .query(Long.class).optional();
     }
 
     // ---------------------------------------------------------- validation

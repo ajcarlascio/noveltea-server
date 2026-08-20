@@ -325,14 +325,16 @@ public class SyncService {
             List<AppliedChange> applied,
             List<ConflictRecord> conflicts) {
 
-        Optional<Long> current = jdbc.sql("SELECT version FROM snapshot WHERE id = :id")
-                .param("id", change.entityId()).query(Long.class).optional();
+        Optional<Long> current = jdbc
+                .sql("SELECT version FROM snapshot WHERE id = :id AND project_id = :projectId")
+                .param("id", change.entityId()).param("projectId", projectId)
+                .query(Long.class).optional();
 
         switch (op) {
             case DELETE -> {
                 if (current.isPresent()) {
-                    jdbc.sql("DELETE FROM snapshot WHERE id = :id")
-                            .param("id", change.entityId()).update();
+                    jdbc.sql("DELETE FROM snapshot WHERE id = :id AND project_id = :projectId")
+                            .param("id", change.entityId()).param("projectId", projectId).update();
                     recordChange(projectId, "snapshot", change.entityId(), "delete", deviceId);
                 }
                 applied.add(new AppliedChange(change.entityId(), "snapshot", current.orElse(0L)));
@@ -413,14 +415,14 @@ public class SyncService {
             return;
         }
 
-        Optional<Long> current = entities.currentVersion(entityType, change.entityId());
+        Optional<Long> current = entities.currentVersion(projectId, entityType, change.entityId());
 
         try {
             switch (op) {
                 case DELETE -> {
                     // Idempotent: deleting something already gone is success.
                     if (current.isPresent()) {
-                        entities.delete(entityType, change.entityId(), deviceId);
+                        entities.delete(projectId, entityType, change.entityId(), deviceId);
                     }
                     applied.add(new AppliedChange(change.entityId(), entityType.wire(), current.orElse(0L)));
                 }
@@ -464,8 +466,16 @@ public class SyncService {
             List<ConflictRecord> conflicts) {
 
         Optional<Long> current = jdbc
-                .sql("SELECT version FROM document WHERE id = :id FOR UPDATE")
+                // document has no project_id; it is scoped through its binder_item. Without
+                // this, knowing an id is enough to overwrite another author's chapter.
+                .sql("""
+                        SELECT d.version FROM document d
+                          JOIN binder_item b ON b.id = d.id
+                         WHERE d.id = :id AND b.project_id = :projectId
+                         FOR UPDATE OF d
+                        """)
                 .param("id", change.entityId())
+                .param("projectId", projectId)
                 .query(Long.class)
                 .optional();
 
@@ -485,8 +495,9 @@ public class SyncService {
             if ("create".equals(change.op())) {
                 // The binder_item must already exist (pushed in the same batch or earlier).
                 Optional<String> title = jdbc
-                        .sql("SELECT title FROM binder_item WHERE id = :id")
+                        .sql("SELECT title FROM binder_item WHERE id = :id AND project_id = :projectId")
                         .param("id", change.entityId())
+                        .param("projectId", projectId)
                         .query(String.class)
                         .optional();
                 if (title.isEmpty()) {
@@ -510,8 +521,13 @@ public class SyncService {
         Long base = change.baseVersion();
 
         if ("create".equals(change.op())) {
-            String existing = jdbc.sql("SELECT content::text FROM document WHERE id = :id")
+            String existing = jdbc.sql("""
+                    SELECT d.content::text FROM document d
+                      JOIN binder_item b ON b.id = d.id
+                     WHERE d.id = :id AND b.project_id = :projectId
+                    """)
                     .param("id", change.entityId())
+                    .param("projectId", projectId)
                     .query(String.class)
                     .single();
             if (jsonEquals(existing, content)) {
@@ -536,7 +552,9 @@ public class SyncService {
                            updated_by_device_id = :deviceId,
                            updated_at = now()
                      WHERE id = :id
+                       AND id IN (SELECT id FROM binder_item WHERE project_id = :projectId)
                     """)
+                    .param("projectId", projectId)
                     .param("content", content)
                     .param("searchText", optionalText(change, "search_text"))
                     .param("wordCount", optionalInt(change, "word_count", 0))
@@ -565,8 +583,9 @@ public class SyncService {
             List<ConflictRecord> conflicts) {
 
         Optional<Long> current = jdbc
-                .sql("SELECT version FROM binder_item WHERE id = :id FOR UPDATE")
+                .sql("SELECT version FROM binder_item WHERE id = :id AND project_id = :projectId FOR UPDATE")
                 .param("id", change.entityId())
+                .param("projectId", projectId)
                 .query(Long.class)
                 .optional();
 
@@ -638,8 +657,12 @@ public class SyncService {
      */
     private UUID createConflictCopy(UUID projectId, UUID deviceId, UUID originalId, String content, Long baseVersion) {
         Map<String, Object> original = jdbc
-                .sql("SELECT project_id, parent_id, title, order_key FROM binder_item WHERE id = :id")
+                .sql("""
+                        SELECT project_id, parent_id, title, order_key FROM binder_item
+                         WHERE id = :id AND project_id = :projectId
+                        """)
                 .param("id", originalId)
+                .param("projectId", projectId)
                 .query()
                 .singleRow();
 
@@ -763,10 +786,11 @@ public class SyncService {
         jdbc.sql("""
                 UPDATE binder_item
                    SET deleted_at = now(), version = version + 1, updated_by_device_id = :deviceId
-                 WHERE id = :id AND deleted_at IS NULL
+                 WHERE id = :id AND project_id = :projectId AND deleted_at IS NULL
                 """)
                 .param("deviceId", deviceId)
                 .param("id", id)
+                .param("projectId", projectId)
                 .update();
         recordChange(projectId, "binder_item", id, "delete", deviceId);
     }
