@@ -2,6 +2,7 @@ package com.noveltea.sync;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.noveltea.binder.BinderService;
 import com.noveltea.config.LimitProperties;
 import com.noveltea.model.ChangeOp;
 import com.noveltea.model.EntityType;
@@ -45,13 +46,16 @@ public class SyncService {
     private final ObjectMapper mapper;
     private final SyncEntityWriter entities;
     private final LimitProperties limits;
+    private final BinderService binder;
 
     public SyncService(
             JdbcClient jdbc,
             TransactionTemplate tx,
             ObjectMapper mapper,
             SyncEntityWriter entities,
-            LimitProperties limits) {
+            LimitProperties limits,
+            BinderService binder) {
+        this.binder = binder;
         this.jdbc = jdbc;
         this.tx = tx;
         this.mapper = mapper;
@@ -257,7 +261,23 @@ public class SyncService {
         List<ConflictRecord> conflicts = new ArrayList<>();
 
         for (ChangeRequest change : safeChanges) {
-            tx.executeWithoutResult(status -> applyOne(projectId, deviceId, change, applied, conflicts));
+            try {
+                tx.executeWithoutResult(status ->
+                        applyOne(projectId, deviceId, change, applied, conflicts));
+            } catch (RuntimeException e) {
+                // The hand-written paths build SQL directly, so a constraint violation or a
+                // rejected reparent arrives as an exception. Uncaught it escaped the loop as
+                // a 500: earlier changes had already committed in their own transactions,
+                // the client got no `applied` list, and its retry turned every accepted
+                // change into a spurious conflict copy. One bad change is one conflict.
+                conflicts.add(new ConflictRecord(
+                        change.entityId(),
+                        change.entityType(),
+                        ConflictReason.INVALID_REQUEST,
+                        null,
+                        null,
+                        describe(e)));
+            }
         }
 
         Long latest = jdbc.sql("""
@@ -747,6 +767,15 @@ public class SyncService {
             return;
         }
 
+        // A reparent over sync is the same operation as BinderService.move and must obey
+        // the same rules. Without this a single push could point an item at its own
+        // descendant: the subtree then has no root, renders nowhere on any device, and the
+        // change propagates to all of them.
+        UUID requestedParent = optionalUuid(change, "parent_id");
+        if (requestedParent != null) {
+            binder.requireReparentIsSafe(projectId, change.entityId(), requestedParent);
+        }
+
         // Tree structure is last-write-wins: a lost rename or reorder is recoverable in
         // seconds, so it does not justify the friction of a conflict copy. Document
         // CONTENT never takes this path.
@@ -954,6 +983,18 @@ public class SyncService {
                 .param("op", op)
                 .param("deviceId", deviceId)
                 .update();
+    }
+
+    /** Only messages we authored are echoed; database text carries SQL and column names. */
+    private static String describe(RuntimeException e) {
+        for (Throwable cause = e; cause != null && cause != cause.getCause(); cause = cause.getCause()) {
+            if (cause instanceof com.noveltea.binder.BinderExceptions.BinderCycle
+                    || cause instanceof com.noveltea.binder.BinderExceptions.CrossProjectMove
+                    || cause instanceof IllegalArgumentException) {
+                return cause.getMessage();
+            }
+        }
+        return "this change could not be applied";
     }
 
     private boolean jsonEquals(String a, String b) {

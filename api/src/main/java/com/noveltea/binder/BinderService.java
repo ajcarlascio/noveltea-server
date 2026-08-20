@@ -293,6 +293,31 @@ public class BinderService {
                 .param("projectId", projectId).query(UUID.class).optional();
     }
 
+    /**
+     * Checks a reparent is safe, taking the same lock {@link #move} takes.
+     *
+     * <p>Exists so the sync push path can reuse these guards rather than reimplement them.
+     * A reparent arriving over sync is the same operation reached a different way, and a
+     * second copy of the rules is a second copy that can drift — which is exactly how the
+     * push path came to accept cycles in the first place.
+     *
+     * @throws BinderExceptions.CrossProjectMove if the new parent is in another project
+     * @throws BinderExceptions.BinderCycle if the move would detach a subtree
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void requireReparentIsSafe(UUID projectId, UUID itemId, UUID newParentId) {
+        Objects.requireNonNull(projectId, "projectId");
+        Objects.requireNonNull(itemId, "itemId");
+        lockProjectTree(projectId);
+        if (newParentId == null) {
+            return; // moving to the root can never cycle
+        }
+        requireSameProject(projectId, newParentId);
+        if (wouldCycle(itemId, newParentId)) {
+            throw new BinderCycle(itemId, newParentId);
+        }
+    }
+
     /** Advisory, transaction-scoped, and keyed on the project rather than any row. */
     private void lockProjectTree(UUID projectId) {
         jdbc.sql("SELECT pg_advisory_xact_lock(hashtext(:key))")
