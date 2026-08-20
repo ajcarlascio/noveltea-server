@@ -262,4 +262,38 @@ class AuthServiceTest extends AbstractPostgresTest {
             return e.getMessage();
         }
     }
+
+    @Test
+    @DisplayName("an unknown account costs a real hash, so timing does not reveal it")
+    void unknownAccountStillHashes() {
+        String email = email();
+        auth.register(email, PASSWORD, "Laptop", "web");
+
+        // The identical error message is only half the defence. If bcrypt is skipped when
+        // no account exists, a stopwatch distinguishes registered addresses from unknown
+        // ones just as reliably as a different message would.
+        long knownNanos = timeFailedLogin(email);
+        long unknownNanos = timeFailedLogin("absent-" + UUID.randomUUID() + "@example.com");
+
+        double ratio = (double) Math.max(knownNanos, unknownNanos)
+                / Math.max(1, Math.min(knownNanos, unknownNanos));
+        assertThat(ratio)
+                .as("a wrong password took %dms and an unknown address %dms — bcrypt is being skipped",
+                        knownNanos / 1_000_000, unknownNanos / 1_000_000)
+                .isLessThan(5.0);
+    }
+
+    private long timeFailedLogin(String email) {
+        long best = Long.MAX_VALUE;
+        for (int i = 0; i < 3; i++) {
+            long started = System.nanoTime();
+            try {
+                auth.login(email, "definitely not the password", "probe", "web");
+            } catch (RuntimeException ignored) {
+                // expected
+            }
+            best = Math.min(best, System.nanoTime() - started);
+        }
+        return best;
+    }
 }

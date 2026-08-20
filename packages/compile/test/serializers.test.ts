@@ -158,3 +158,46 @@ describe("unrecognised content", () => {
     assert.ok(warnings.some((w) => w.message.includes("image")));
   });
 });
+
+describe("mark naming conventions", () => {
+  // prosemirror-schema-basic says strong/em; TipTap's StarterKit says bold/italic for the
+  // same marks. Recognising one set silently drops every emphasised run in a manuscript:
+  // the words survive, the formatting does not, and the export looks plausible.
+  const equivalents: [string, string][] = [
+    ["strong", "bold"],
+    ["em", "italic"],
+    ["strike", "strikethrough"],
+  ];
+
+  for (const [canonical, alias] of equivalents) {
+    test(`"${alias}" renders identically to "${canonical}"`, () => {
+      const of = (mark: string) =>
+        doc(para(text("she was certain", [{ type: mark }])));
+
+      assert.equal(toHtml(of(alias)).output, toHtml(of(canonical)).output);
+      assert.equal(toMarkdown(of(alias)).output, toMarkdown(of(canonical)).output);
+    });
+
+    test(`"${alias}" does not warn`, () => {
+      const result = toHtml(doc(para(text("x", [{ type: alias }]))));
+      assert.equal(
+        result.warnings.filter((w) => w.code === "unsupported_mark").length,
+        0,
+        `${alias} must be recognised, not treated as unknown`,
+      );
+    });
+  }
+
+  test("a genuinely unknown mark still warns and keeps its text", () => {
+    const result = toHtml(doc(para(text("highlighted", [{ type: "highlight" }]))));
+    assert.match(result.output, /highlighted/);
+    assert.equal(result.warnings.filter((w) => w.code === "unsupported_mark").length, 1);
+  });
+
+  test("a link under either convention is still a link", () => {
+    const result = toHtml(doc(para(
+      text("see", [{ type: "link", attrs: { href: "https://example.com" } }]),
+    )));
+    assert.match(result.output, /<a href="https:\/\/example\.com">see<\/a>/);
+  });
+});

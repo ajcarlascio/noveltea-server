@@ -123,12 +123,18 @@ public class CompileService {
                  WHERE project_id = :projectId AND format = :format AND destination = :destination
                    AND status IN ('queued', 'running')
                    AND preset_id IS NOT DISTINCT FROM CAST(:presetId AS uuid)
+                   -- Comparing the config too: without it, an author who tweaks an inline
+                   -- config and re-exports is handed the PREVIOUS job's artifact, which
+                   -- silently will not match what they asked for.
+                   AND inline_config IS NOT DISTINCT FROM CAST(:inlineConfig AS jsonb)
                  ORDER BY created_at LIMIT 1
                 """)
                 .param("projectId", projectId)
                 .param("format", format.wire())
                 .param("destination", destination.wire())
                 .param("presetId", request.presetId())
+                .param("inlineConfig",
+                        request.inlineConfig() == null ? null : request.inlineConfig().toString())
                 .query(UUID.class)
                 .optional();
         if (duplicate.isPresent()) {

@@ -21,7 +21,7 @@ export async function drainQueue(pool: pg.Pool, config: WorkerConfig): Promise<n
     let job = null;
     try {
       await client.query("BEGIN");
-      job = await claimNextJob(client, config.maxAttempts);
+      job = await claimNextJob(client, config.maxAttempts, config.leaseSeconds);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});

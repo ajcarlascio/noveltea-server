@@ -163,6 +163,12 @@ public class RetentionService {
                    AND NOT EXISTS (
                        SELECT 1 FROM change_log c
                         WHERE c.entity_id = b.id AND c.entity_type = 'binder_item')
+                   -- Never take a live child with it. parent_id cascades, so deleting a
+                   -- tombstoned folder that still has live children would destroy an
+                   -- author's documents with no tombstone and no feed row to explain it.
+                   AND NOT EXISTS (
+                       SELECT 1 FROM binder_item child
+                        WHERE child.parent_id = b.id AND child.deleted_at IS NULL)
                 """)
                 .param("olderThan", olderThan)
                 .update();

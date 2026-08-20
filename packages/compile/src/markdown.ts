@@ -1,5 +1,5 @@
 import { isSafeHref } from "./html.ts";
-import { inspect } from "./text.ts";
+import { canonicalMark, inspect } from "./text.ts";
 import type { CompileWarning, ProseMirrorNode } from "./types.ts";
 
 /**
@@ -35,7 +35,7 @@ export function toMarkdown(doc: ProseMirrorNode | null | undefined): {
   const renderText = (node: ProseMirrorNode): string => {
     let text = escapeMarkdown(node.text ?? "");
     for (const mark of node.marks ?? []) {
-      switch (mark.type) {
+      switch (canonicalMark(mark.type) ?? mark.type) {
         case "strong": text = `**${text}**`; break;
         case "em": text = `*${text}*`; break;
         case "code": text = `\`${node.text ?? ""}\``; break;

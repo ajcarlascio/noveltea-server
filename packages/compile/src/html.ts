@@ -1,4 +1,4 @@
-import { inspect, KNOWN_MARKS } from "./text.ts";
+import { canonicalMark, inspect } from "./text.ts";
 import type { CompileWarning, ProseMirrorNode } from "./types.ts";
 
 const ESCAPES: Record<string, string> = {
@@ -70,7 +70,7 @@ export function toHtml(doc: ProseMirrorNode | null | undefined): {
   const renderText = (node: ProseMirrorNode): string => {
     let html = escapeHtml(node.text ?? "");
     for (const mark of node.marks ?? []) {
-      if (mark.type === "link") {
+      if (canonicalMark(mark.type) === "link") {
         const raw = String(mark.attrs?.href ?? "");
         if (isSafeHref(raw)) {
           html = `<a href="${escapeHtml(raw)}">${html}</a>`;
@@ -78,9 +78,11 @@ export function toHtml(doc: ProseMirrorNode | null | undefined): {
           // Keep the author's words, drop the link. Reported by inspect().
           unsafeLinks.push(raw);
         }
-      } else if (KNOWN_MARKS.has(mark.type) && MARK_TAGS[mark.type]) {
-        const tag = MARK_TAGS[mark.type];
-        html = `<${tag}>${html}</${tag}>`;
+      } else {
+        const tag = MARK_TAGS[canonicalMark(mark.type) ?? ""];
+        if (tag) {
+          html = `<${tag}>${html}</${tag}>`;
+        }
       }
     }
     return html;

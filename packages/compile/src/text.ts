@@ -26,7 +26,38 @@ export const KNOWN_BLOCKS = new Set([
   "text",
 ]);
 
-export const KNOWN_MARKS = new Set(["strong", "em", "code", "link", "underline", "strike"]);
+/**
+ * Mark names, in both conventions.
+ *
+ * <p>`prosemirror-schema-basic` calls them `strong` and `em`; TipTap's StarterKit calls the
+ * same marks `bold` and `italic`. Recognising only one set means every emphasised run in a
+ * manuscript arrives as an unknown mark: the words survive, the formatting is dropped, and
+ * the export looks plausible while being wrong. Nothing crashes, which is what makes it
+ * dangerous.
+ *
+ * <p>Accepting both is a safety net, not the fix. The real answer is one versioned schema
+ * both the editor and this package derive from.
+ */
+export const MARK_ALIASES: Record<string, string> = {
+  strong: "strong",
+  bold: "strong",
+  em: "em",
+  italic: "em",
+  code: "code",
+  link: "link",
+  underline: "underline",
+  underlined: "underline",
+  strike: "strike",
+  strikethrough: "strike",
+  s: "strike",
+};
+
+/** Canonical name for a mark, or null when this package does not know it. */
+export function canonicalMark(type: string): string | null {
+  return MARK_ALIASES[type] ?? null;
+}
+
+export const KNOWN_MARKS = new Set(Object.keys(MARK_ALIASES));
 
 /**
  * Walks a document, collecting text and reporting anything unrecognised.

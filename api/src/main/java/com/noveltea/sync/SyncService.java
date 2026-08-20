@@ -908,17 +908,38 @@ public class SyncService {
         recordChange(projectId, "document", id, "create", deviceId);
     }
 
+    /**
+     * Tombstones an item <b>and everything beneath it</b>.
+     *
+     * <p>Deleting only the named row left its children live but unreachable — their parent
+     * was gone, so no client could render them — and the retention sweep later hard-deleted
+     * them through the foreign key cascade with no tombstone and no feed row at all. Every
+     * device that had those documents would keep them forever while the server had none,
+     * and nothing would ever say so.
+     */
     private void softDeleteItem(UUID projectId, UUID deviceId, UUID id) {
-        jdbc.sql("""
+        List<UUID> deleted = jdbc.sql("""
+                WITH RECURSIVE subtree AS (
+                    SELECT id FROM binder_item WHERE id = :id AND project_id = :projectId
+                    UNION ALL
+                    SELECT b.id FROM binder_item b JOIN subtree s ON b.parent_id = s.id
+                )
                 UPDATE binder_item
                    SET deleted_at = now(), version = version + 1, updated_by_device_id = :deviceId
-                 WHERE id = :id AND project_id = :projectId AND deleted_at IS NULL
+                 WHERE id IN (SELECT id FROM subtree) AND deleted_at IS NULL
+                RETURNING id
                 """)
                 .param("deviceId", deviceId)
                 .param("id", id)
                 .param("projectId", projectId)
-                .update();
-        recordChange(projectId, "binder_item", id, "delete", deviceId);
+                .query(UUID.class)
+                .list();
+
+        // One feed row per item: a client learns about each document it holds, not just the
+        // folder that contained them.
+        for (UUID deletedId : deleted) {
+            recordChange(projectId, "binder_item", deletedId, "delete", deviceId);
+        }
     }
 
     /** Appends the feed row. Called inside the same transaction as the write, always. */
