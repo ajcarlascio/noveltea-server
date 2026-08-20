@@ -94,6 +94,16 @@ openApi {
     }
 }
 
+// OpenApiSpecFreshnessTest compares the checked-in spec to the live handler mapping, so the
+// spec is an input to the test task. Without this, Gradle considers `test` up to date after
+// the spec alone changes and the guard silently does not run — which is exactly the state it
+// exists to catch.
+tasks.named<Test>("test") {
+    inputs.file("$rootDir/docs/api/openapi.yaml")
+        .withPropertyName("openApiSpec")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 // The spec is checked in (chosen over a build/ artifact so it can be diffed in review —
 // a spec change with nothing to fail a test on is exactly the kind of silent drift this
 // generation step exists to prevent). Wired into `build` so it can never go stale.

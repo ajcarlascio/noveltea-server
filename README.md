@@ -51,6 +51,18 @@ It is regenerated automatically as part of `./gradlew build` (and directly via
 app in a forked JVM, asks it for `/v3/api-docs`, writes the result to that file, and stops
 it. Commit the regenerated file along with whatever controller change produced it.
 
+**That step boots the real application, so Postgres must be running** — `docker compose up
+-d` first. It is not the Testcontainers database the tests use; the forked app reads
+`application.yml` like any other run. Without a database the plugin waits out its timeout
+and fails with nothing useful in the message, which looks like a plugin problem and is not.
+
+You are not required to regenerate on a machine without a database, because the spec cannot
+drift silently: `OpenApiSpecFreshnessTest` reads the routes out of the live handler mapping
+and compares them to the checked-in file, in both directions. A controller method added
+without regenerating fails that test, and so does a spec entry for a route that no longer
+exists. The file is declared as an input to the `test` task, so editing it alone still
+re-runs the check rather than leaving Gradle to call the task up to date.
+
 The same annotations serve the spec live, and Swagger UI on top of it — both are **off by
 default**, because `/v3/api-docs` is a complete map of every route and schema, and a
 self-hosted instance may face the open internet. Turn them on with:
