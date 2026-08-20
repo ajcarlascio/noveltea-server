@@ -31,10 +31,22 @@ public class AuthService {
     private final TokenService tokens;
     private final PasswordEncoder passwords;
 
+    /**
+     * A real hash, compared against when no account exists.
+     *
+     * <p>The previous constant was not valid bcrypt, so {@code matches} rejected it on a
+     * regex before hashing anything: a login for an unknown address returned immediately
+     * while a real one paid a full bcrypt round. That timing difference is precisely the
+     * account-enumeration oracle the identical error message exists to prevent. Generated
+     * at startup so it is always well-formed for whatever encoder is configured.
+     */
+    private final String dummyHash;
+
     public AuthService(JdbcClient jdbc, TokenService tokens, PasswordEncoder passwords) {
         this.jdbc = jdbc;
         this.tokens = tokens;
         this.passwords = passwords;
+        this.dummyHash = passwords.encode("password-for-an-account-that-does-not-exist");
     }
 
     public record Session(
@@ -82,7 +94,7 @@ public class AuthService {
         // Hash even when the user is absent, so a missing account and a wrong password
         // take comparable time and cannot be distinguished by a stopwatch.
         boolean ok = passwords.matches(password == null ? "" : password,
-                hash == null ? "$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidin" : hash);
+                hash == null ? dummyHash : hash);
         if (user == null || hash == null || !ok) {
             throw new InvalidCredentials(GENERIC_FAILURE);
         }

@@ -167,4 +167,80 @@ class SnapshotSyncTest extends AbstractPostgresTest {
                     assertThat(c.op()).isEqualTo("delete");
                 });
     }
+
+    @Test
+    @DisplayName("a comment made offline can be pushed, with authorship from the device")
+    void commentsCanBePushed() {
+        UUID docId = seedDocument("Chapter One", "V", "draft");
+        UUID commentId = UUID.randomUUID();
+        ObjectNode data = mapper.createObjectNode();
+        data.put("document_id", docId.toString()).put("body", "written on the train");
+
+        PushResponse response = sync.push(projectId, deviceA, List.of(
+                new ChangeRequest("comment", commentId, "create", null, data)));
+
+        assertThat(response.conflicts()).isEmpty();
+        assertThat(jdbc.sql("SELECT body FROM comment WHERE id = :id")
+                .param("id", commentId).query(String.class).single())
+                .isEqualTo("written on the train");
+        assertThat(jdbc.sql("SELECT author_user_id FROM comment WHERE id = :id")
+                .param("id", commentId).query(UUID.class).single())
+                .as("authorship comes from the pushing device, never the payload")
+                .isEqualTo(userId);
+    }
+
+    @Test
+    @DisplayName("a pushed comment cannot forge its author")
+    void pushedCommentCannotForgeAuthor() {
+        UUID docId = seedDocument("Chapter One", "V", "draft");
+        UUID commentId = UUID.randomUUID();
+        ObjectNode data = mapper.createObjectNode();
+        data.put("document_id", docId.toString()).put("body", "not mine")
+                .put("author_user_id", UUID.randomUUID().toString());
+
+        sync.push(projectId, deviceA, List.of(
+                new ChangeRequest("comment", commentId, "create", null, data)));
+
+        assertThat(jdbc.sql("SELECT author_user_id FROM comment WHERE id = :id")
+                .param("id", commentId).query(UUID.class).single())
+                .as("a client must not be able to attribute a remark to someone else")
+                .isEqualTo(userId);
+    }
+
+    @Test
+    @DisplayName("a comment for another project's document is refused")
+    void crossProjectCommentRefused() {
+        UUID otherUser = UUID.randomUUID();
+        UUID otherProject = UUID.randomUUID();
+        jdbc.sql("INSERT INTO app_user (id, email) VALUES (:id, :e)")
+                .param("id", otherUser).param("e", otherUser + "@example.com").update();
+        jdbc.sql("INSERT INTO project (id, owner_id, title) VALUES (:id, :o, 'Theirs')")
+                .param("id", otherProject).param("o", otherUser).update();
+        UUID foreignDoc = binder.create(otherProject, deviceA, null, "document", "Theirs", null);
+
+        UUID commentId = UUID.randomUUID();
+        ObjectNode data = mapper.createObjectNode();
+        data.put("document_id", foreignDoc.toString()).put("body", "intruding");
+
+        PushResponse response = sync.push(projectId, deviceA, List.of(
+                new ChangeRequest("comment", commentId, "create", null, data)));
+
+        assertThat(response.conflicts()).hasSize(1);
+        assertThat(jdbc.sql("SELECT count(*) FROM comment WHERE id = :id")
+                .param("id", commentId).query(Long.class).single()).isZero();
+    }
+
+    @Test
+    @DisplayName("a pushed comment reaches other devices through the feed")
+    void pushedCommentsSync() {
+        UUID docId = seedDocument("Chapter One", "V", "draft");
+        UUID commentId = UUID.randomUUID();
+        ObjectNode data = mapper.createObjectNode();
+        data.put("document_id", docId.toString()).put("body", "a note");
+        sync.push(projectId, deviceA, List.of(
+                new ChangeRequest("comment", commentId, "create", null, data)));
+
+        assertThat(sync.pull(projectId, 0, 100).changes())
+                .anySatisfy(c -> assertThat(c.entityType()).isEqualTo("comment"));
+    }
 }

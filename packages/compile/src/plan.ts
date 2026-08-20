@@ -20,6 +20,7 @@ export function planCompile(
   const warnings: CompileWarning[] = [];
   const included: PlannedItem[] = [];
   const depths = depthOf(items);
+  const trashed = trashedIds(items);
 
   let wordCount = 0;
   let sawNotes = false;
@@ -42,6 +43,19 @@ export function planCompile(
     }
 
     if (item.type === "trash") {
+      continue;
+    }
+
+    // Trashing is a REPARENT, not a `deleted_at` write, so a discarded chapter still looks
+    // like an ordinary live document — it simply sits under the trash node. Checking only
+    // `deletedAt` above therefore misses it entirely, and it lands in the manuscript.
+    if (trashed.has(item.id)) {
+      warnings.push({
+        code: "excluded_trashed",
+        message: `"${item.title}" is in the trash and will not be included`,
+        itemId: item.id,
+        itemTitle: item.title,
+      });
       continue;
     }
 
@@ -102,6 +116,35 @@ export function planCompile(
   }
 
   return { included, warnings, wordCount };
+}
+
+/**
+ * Every item inside the trash, at any depth.
+ *
+ * <p>Walks down from each trash node rather than up from each item, so a deeply nested
+ * discarded scene is caught as surely as a top-level one.
+ */
+function trashedIds(items: CompileInput[]): Set<string> {
+  const childrenOf = new Map<string, CompileInput[]>();
+  for (const item of items) {
+    const key = item.parentId ?? "";
+    const siblings = childrenOf.get(key) ?? [];
+    siblings.push(item);
+    childrenOf.set(key, siblings);
+  }
+
+  const trashed = new Set<string>();
+  const walk = (id: string) => {
+    for (const child of childrenOf.get(id) ?? []) {
+      if (trashed.has(child.id)) continue; // a cycle in supplied items must not hang this
+      trashed.add(child.id);
+      walk(child.id);
+    }
+  };
+  for (const item of items) {
+    if (item.type === "trash") walk(item.id);
+  }
+  return trashed;
 }
 
 /** Binder order: parents before children, siblings by order_key. */

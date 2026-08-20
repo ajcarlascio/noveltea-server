@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Greenfield — nothing is scaffolded yet. The design of record is `docs/design/v1-data-model-api.md`. The commands and module paths below describe the *intended* layout; verify they exist before relying on them.
+The backend is built and tested. The design of record is `docs/design/v1-data-model-api.md`, amended as decisions were made; where this file and that one disagree, this file wins. A separate repo holds the front end.
 
 ## What this is
 
@@ -123,7 +123,7 @@ These tables live in **Core** migrations even though no Core code writes to them
 The Gradle wrapper jar is not committed yet — run `gradle wrapper --gradle-version 8.10` once (needs a local Gradle) to generate `gradlew`, or substitute `gradle` for `./gradlew` below.
 
 ```bash
-docker compose up -d             # local Postgres 16
+docker compose up -d             # local Postgres 18
 
 ./gradlew build                  # compile + test everything
 ./gradlew :api:bootRun           # run the API server
@@ -146,6 +146,14 @@ npm run generate -w @noveltea/client-db   # rebuild the migration bundle
 cd worker && npm run dev
 cd worker && npm test -- src/export/epub.test.ts     # single test file
 ```
+
+## Structural moves are serialised per project
+
+`BinderService.move` takes a transaction-scoped advisory lock on the project before it checks for a cycle.
+
+The check reads the tree and then writes. Without the lock, two devices moving A under B and B under A at the same instant both pass against a pre-move snapshot and both commit, leaving a subtree that points at itself — present in the database, absent from every client, because every read walks down from the roots. Row locks cannot express this: the rows a cycle would involve are not known until after the read.
+
+Moves are rare and brief, so serialising them costs nothing measurable next to losing a subtree. `BinderMoveCycleRaceTest` reproduces the race and fails on every repetition when the lock is removed.
 
 ## Binder tree semantics
 
@@ -369,7 +377,7 @@ Documents and binder items are deliberately not spec-driven: conflict copies and
 
 `GET|POST /api/v1/projects/{id}/sync` is implemented in `com.noveltea.sync.SyncService`. What is and is not true of it today:
 
-- **Writable entity types are `binder_item` and `document` only.** Everything else returns a per-change conflict with reason `not_implemented` rather than silently dropping fields. Extend `SyncService.WRITABLE` and add a writer when you add a type.
+- **Writable entity types are `binder_item` and `document` only.** Everything else returns a per-change conflict with reason `not_implemented` rather than silently dropping fields. Add a case to the switch in `SyncService.applyOne`, or a `SyncEntitySpec` entry, when you add a type.
 - **Auth is real now.** Every route under `/api/v1` needs a bearer access token except register, login, refresh and pair. The device is taken from the token's `did` claim, never from a header, so a client cannot attribute writes to another device. The pull feed still needs role/subtree visibility filtering, which arrives with the commercial `SharingProvider`.
 - **The conflict copy is the whole safety net.** A stale `document` write is never merged and never dropped: the server keeps its version, the client's text is stored as a titled sibling, and the response returns `conflictCopyId`. The client-side merge editor that reconciles the pair is not built yet — until it is, authors see two documents.
 - **Tree writes are last-write-wins** by arrival. Document content never takes that path.

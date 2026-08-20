@@ -206,4 +206,42 @@ describe("compile queue", () => {
 
     assert.equal(a + b + c, 1, "SKIP LOCKED must hand the job to exactly one worker");
   });
+
+  test("A JOB ABANDONED BY A CRASHED WORKER IS RECLAIMED", async () => {
+    const projectId = await seedProject("Crashed Worker");
+    const jobId = await queueJob(projectId, "md", "download");
+
+    // Exactly what a killed worker leaves behind: claimed, marked running, never finished.
+    await pool.query(
+      `UPDATE compile_job SET status = 'running', started_at = now() - interval '1 hour',
+              attempts = 1 WHERE id = $1`,
+      [jobId],
+    );
+
+    // Asserted on this job rather than the drain count: earlier tests leave their own rows
+    // behind, so a non-zero count says nothing about which job moved. The job is an hour
+    // old, so the lease length is what decides — a long one still covers it.
+    await drainQueue(pool, { ...config, leaseSeconds: 7200 });
+    assert.equal((await jobRow(jobId)).status, "running", "not reclaimable while the lease holds");
+
+    await drainQueue(pool, config);
+
+    const job = await jobRow(jobId);
+    assert.equal(job.status, "done");
+    assert.ok(job.output_path, "the export the author asked for must eventually be produced");
+  });
+
+  test("a job still inside its lease is left alone", async () => {
+    const projectId = await seedProject("Still Running");
+    const jobId = await queueJob(projectId, "txt", "download");
+    await pool.query(
+      `UPDATE compile_job SET status = 'running', started_at = now(), attempts = 1 WHERE id = $1`,
+      [jobId],
+    );
+
+    await drainQueue(pool, config);
+
+    assert.equal((await jobRow(jobId)).status, "running",
+      "reclaiming a live job would render the same manuscript twice");
+  });
 });

@@ -305,7 +305,133 @@ public class SyncService {
             case DOCUMENT -> applyDocument(projectId, deviceId, change, applied, conflicts);
             case BINDER_ITEM -> applyBinderItem(projectId, deviceId, change, applied, conflicts);
             case SNAPSHOT -> applySnapshot(projectId, deviceId, op, change, applied, conflicts);
+            case COMMENT -> applyComment(projectId, deviceId, op, change, applied, conflicts);
             default -> applyDataEntity(projectId, deviceId, entityType, op, change, applied, conflicts);
+        }
+    }
+
+    /**
+     * Comments made offline, arriving when the device reconnects.
+     *
+     * <p>Authorship is taken from the pushing device's owner, never from the payload: a
+     * client must not be able to attribute a remark to someone else. Editing and deleting
+     * are restricted to the author for the same reason.
+     */
+    private void applyComment(
+            UUID projectId,
+            UUID deviceId,
+            ChangeOp op,
+            ChangeRequest change,
+            List<AppliedChange> applied,
+            List<ConflictRecord> conflicts) {
+
+        UUID actor = deviceId == null ? null : jdbc
+                .sql("SELECT user_id FROM device WHERE id = :id")
+                .param("id", deviceId).query(UUID.class).optional().orElse(null);
+
+        Optional<Long> current = jdbc
+                .sql("SELECT version FROM comment WHERE id = :id AND project_id = :projectId")
+                .param("id", change.entityId()).param("projectId", projectId)
+                .query(Long.class).optional();
+
+        switch (op) {
+            case CREATE -> {
+                if (current.isPresent()) {
+                    applied.add(new AppliedChange(change.entityId(), "comment", current.get()));
+                    return;
+                }
+                String documentIdText = optionalText(change, "document_id");
+                String body = optionalText(change, "body");
+                if (documentIdText == null || body == null || body.isBlank()) {
+                    conflicts.add(new ConflictRecord(change.entityId(), "comment",
+                            ConflictReason.INVALID_REQUEST, null, null,
+                            "a comment needs document_id and body"));
+                    return;
+                }
+
+                UUID documentId = UUID.fromString(documentIdText);
+                boolean inProject = Boolean.TRUE.equals(jdbc.sql("""
+                        SELECT EXISTS (SELECT 1 FROM binder_item
+                                        WHERE id = :id AND project_id = :projectId)
+                        """)
+                        .param("id", documentId).param("projectId", projectId)
+                        .query(Boolean.class).single());
+                if (!inProject) {
+                    conflicts.add(new ConflictRecord(change.entityId(), "comment",
+                            ConflictReason.INVALID_REQUEST, null, null,
+                            "document_id does not refer to anything in this project"));
+                    return;
+                }
+
+                String anchor = change.data() != null && change.data().hasNonNull("anchor")
+                        ? change.data().get("anchor").toString()
+                        : null;
+                UUID parent = optionalUuid(change, "parent_comment_id");
+
+                jdbc.sql("""
+                        INSERT INTO comment
+                            (id, project_id, document_id, parent_comment_id, author_user_id,
+                             body, anchor, updated_by_device_id)
+                        VALUES (:id, :projectId, :documentId, :parentId, :authorId, :body,
+                                CAST(:anchor AS jsonb), :deviceId)
+                        """)
+                        .param("id", change.entityId()).param("projectId", projectId)
+                        .param("documentId", documentId).param("parentId", parent)
+                        .param("authorId", actor).param("body", body.trim())
+                        .param("anchor", parent == null ? anchor : null)
+                        .param("deviceId", deviceId)
+                        .update();
+                recordChange(projectId, "comment", change.entityId(), "create", deviceId);
+                applied.add(new AppliedChange(change.entityId(), "comment", 1L));
+            }
+            case UPDATE, DELETE -> {
+                if (current.isEmpty()) {
+                    if (op == ChangeOp.DELETE) {
+                        applied.add(new AppliedChange(change.entityId(), "comment", 0L));
+                    } else {
+                        conflicts.add(new ConflictRecord(change.entityId(), "comment",
+                                ConflictReason.ENTITY_MISSING, null, null, null));
+                    }
+                    return;
+                }
+                UUID author = jdbc.sql("SELECT author_user_id FROM comment WHERE id = :id")
+                        .param("id", change.entityId()).query(UUID.class).optional().orElse(null);
+                if (author != null && !author.equals(actor)) {
+                    conflicts.add(new ConflictRecord(change.entityId(), "comment",
+                            ConflictReason.INVALID_REQUEST, null, null,
+                            "only the author can change a comment"));
+                    return;
+                }
+
+                long next = current.get() + 1;
+                if (op == ChangeOp.DELETE) {
+                    jdbc.sql("""
+                            UPDATE comment SET deleted_at = now(), version = :next,
+                                   updated_by_device_id = :deviceId
+                             WHERE id = :id AND project_id = :projectId
+                            """)
+                            .param("next", next).param("deviceId", deviceId)
+                            .param("id", change.entityId()).param("projectId", projectId).update();
+                    recordChange(projectId, "comment", change.entityId(), "delete", deviceId);
+                } else {
+                    String body = optionalText(change, "body");
+                    if (body == null || body.isBlank()) {
+                        conflicts.add(new ConflictRecord(change.entityId(), "comment",
+                                ConflictReason.INVALID_REQUEST, null, null, "a comment needs a body"));
+                        return;
+                    }
+                    jdbc.sql("""
+                            UPDATE comment SET body = :body, version = :next,
+                                   updated_by_device_id = :deviceId
+                             WHERE id = :id AND project_id = :projectId
+                            """)
+                            .param("body", body.trim()).param("next", next)
+                            .param("deviceId", deviceId).param("id", change.entityId())
+                            .param("projectId", projectId).update();
+                    recordChange(projectId, "comment", change.entityId(), "update", deviceId);
+                }
+                applied.add(new AppliedChange(change.entityId(), "comment", next));
+            }
         }
     }
 
@@ -782,17 +908,38 @@ public class SyncService {
         recordChange(projectId, "document", id, "create", deviceId);
     }
 
+    /**
+     * Tombstones an item <b>and everything beneath it</b>.
+     *
+     * <p>Deleting only the named row left its children live but unreachable — their parent
+     * was gone, so no client could render them — and the retention sweep later hard-deleted
+     * them through the foreign key cascade with no tombstone and no feed row at all. Every
+     * device that had those documents would keep them forever while the server had none,
+     * and nothing would ever say so.
+     */
     private void softDeleteItem(UUID projectId, UUID deviceId, UUID id) {
-        jdbc.sql("""
+        List<UUID> deleted = jdbc.sql("""
+                WITH RECURSIVE subtree AS (
+                    SELECT id FROM binder_item WHERE id = :id AND project_id = :projectId
+                    UNION ALL
+                    SELECT b.id FROM binder_item b JOIN subtree s ON b.parent_id = s.id
+                )
                 UPDATE binder_item
                    SET deleted_at = now(), version = version + 1, updated_by_device_id = :deviceId
-                 WHERE id = :id AND project_id = :projectId AND deleted_at IS NULL
+                 WHERE id IN (SELECT id FROM subtree) AND deleted_at IS NULL
+                RETURNING id
                 """)
                 .param("deviceId", deviceId)
                 .param("id", id)
                 .param("projectId", projectId)
-                .update();
-        recordChange(projectId, "binder_item", id, "delete", deviceId);
+                .query(UUID.class)
+                .list();
+
+        // One feed row per item: a client learns about each document it holds, not just the
+        // folder that contained them.
+        for (UUID deletedId : deleted) {
+            recordChange(projectId, "binder_item", deletedId, "delete", deviceId);
+        }
     }
 
     /** Appends the feed row. Called inside the same transaction as the write, always. */

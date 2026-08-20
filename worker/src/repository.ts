@@ -22,19 +22,32 @@ interface Queryable {
  * different row rather than queueing behind the same one, so scaling out needs no
  * coordination and a crashed worker blocks nobody.
  */
-export async function claimNextJob(db: Queryable, maxAttempts: number): Promise<ClaimedJob | null> {
+export async function claimNextJob(
+  db: Queryable,
+  maxAttempts: number,
+  leaseSeconds = 600,
+): Promise<ClaimedJob | null> {
   const { rows } = await db.query(
     `UPDATE compile_job
         SET status = 'running', started_at = now(), attempts = attempts + 1
       WHERE id = (
             SELECT id FROM compile_job
-             WHERE status = 'queued' AND attempts < $1
-               AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+             WHERE attempts < $1
+               AND (
+                    (status = 'queued'
+                     AND (next_attempt_at IS NULL OR next_attempt_at <= now()))
+                 -- A worker killed mid-render leaves its job 'running' forever. Without
+                 -- reclaiming it the job is never retried, the API's dedupe keeps handing
+                 -- out the dead id, and its slot counts against the per-user pending
+                 -- limit — five crashes lock an account out of exporting entirely.
+                 OR (status = 'running'
+                     AND started_at < now() - ($2 || ' seconds')::interval)
+               )
              ORDER BY next_attempt_at NULLS FIRST, created_at
              FOR UPDATE SKIP LOCKED
              LIMIT 1)
       RETURNING id, project_id, format, destination, preset_id, inline_config, attempts`,
-    [maxAttempts],
+    [maxAttempts, leaseSeconds],
   );
   if (rows.length === 0) return null;
   const row = rows[0];
