@@ -287,12 +287,38 @@ An hourly sweep (`RetentionService`) removes what nothing will read again: old f
 
 A device that has never synced has cursor 0 and therefore blocks purging entirely — correct, since it has seen nothing. Revoked devices are ignored, or an abandoned laptop would preserve history forever.
 
-**When a cursor falls behind the purge point, the client is told to resync** (`PullResponse.resyncRequired`) and must rebuild from `GET /binder` plus documents. Two details make that safe:
+**When a cursor falls behind the purge point, the client is told to resync** (`PullResponse.resyncRequired`) and must rebuild from `GET /binder` plus `GET /projects/{id}/documents`. Two details make that safe:
 
 - The comparison is **strictly** below `change_log_purged_below`. A cursor sitting exactly at the purge point has seen everything removed.
 - The returned `latestId` is never below the purge point, **even when the feed is now empty**. Resuming at 0 would put the client straight back into a resync — an infinite loop.
 
 **Server exports are never deleted.** Only files inside the staging directory are removed, checked by resolved path. A `server` export is the author's own manuscript sitting in the operator's mount, and deleting it would be unforgivable.
+
+## Document bodies exist for one reason
+
+`GET /projects/{id}/documents` returns every document's current content, paged. It is
+not a general read API — nothing in normal operation uses it, because the change feed
+already carries content on every row it serves.
+
+It exists because the feed carries content **only for rows appended since the client's
+cursor**. A client told to resync has no cursor worth trusting, so there is no request
+it can make that returns the body of a document nobody has touched recently. Without
+this endpoint a rebuild restores the binder's structure and loses its prose — which is
+the one failure mode the whole sync design is arranged to prevent.
+
+Three things it copies from the feed on purpose, because the constraints are the same:
+
+- **A page stops on bytes as well as rows** (`maxSyncPageBytes`). 500 full documents has
+  no predictable size, and a rebuild happens on whatever connection the author has.
+- **An oversized document is emitted alone**, never skipped. Skipping would make it
+  permanently unrecoverable; refusing the page would stop the rebuild there forever.
+- **Ordered by `id`, not `updated_at`.** A timestamp is not unique — two documents
+  written in one transaction share it — and a cursor on a non-unique column skips or
+  repeats rows.
+
+**Trashed documents are included; tombstoned ones are not.** Trashing is a move and the
+item is still restorable, so a rebuild that dropped it would empty the author's trash
+behind their back. A tombstone means gone.
 
 ## Search
 

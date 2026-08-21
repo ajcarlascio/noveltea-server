@@ -25,13 +25,17 @@ tags:
   description: Anchored annotations and replies on a document.
 - name: Binder
   description: "The document/folder tree: create, rename, move, trash and restore."
-- name: Snapshots
-  description: "Point-in-time document copies: capture, list, restore."
 - name: Projects
   description: "Project lifecycle: create, read, update, soft-delete, restore, purge."
 - name: Search
   description: "Full-text search across a project's titles, synopses, body text and\
     \ notes."
+- name: Documents
+  description: "Document bodies, for clients rebuilding a replica."
+- name: Compile
+  description: What this installation can export to.
+- name: Snapshots
+  description: "Point-in-time document copies: capture, list, restore."
 - name: Sync
   description: "The offline sync protocol. Clients pull an append-only change feed\
     \ and push local changes; see each operation for how conflicts and resync are\
@@ -48,8 +52,6 @@ tags:
 - name: Auth
   description: "Registration, login, device pairing, and the devices a session can\
     \ see."
-- name: Compile
-  description: What this installation can export to.
 paths:
   /api/v1/snapshots/{snapshotId}/restore:
     post:
@@ -871,6 +873,44 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/SearchResults"
+  /api/v1/projects/{projectId}/documents:
+    get:
+      tags:
+      - Documents
+      summary: Read document bodies for a project
+      description: |
+        Every document's current content, paged. This is what a client uses after `GET /sync` answers `resyncRequired`: the change feed carries content only on rows appended since a cursor, so a client rebuilding from scratch cannot recover the body of a document nobody has touched recently.
+
+        Paged like the feed — a page stops at whichever comes first, rows or bytes — so a project of full documents has a predictable size on mobile data. Pass the `nextCursor` from one page as `after` on the next, and stop when `hasMore` is false.
+
+        Ordered by id, which is arbitrary but stable. Trashed documents are included, because trashing is a move and the item is still restorable; tombstoned ones are not, because those are gone.
+      operationId: documents
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/DocumentPage"
   /api/v1/projects/{projectId}/conflicts:
     get:
       tags:
@@ -1483,6 +1523,39 @@ components:
           items:
             $ref: "#/components/schemas/SearchHit"
         truncated:
+          type: boolean
+    DocumentBody:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        content:
+          $ref: "#/components/schemas/JsonNode"
+        searchText:
+          type: string
+        wordCount:
+          type: integer
+          format: int64
+        version:
+          type: integer
+          format: int64
+        updatedAt:
+          type: string
+          format: date-time
+    DocumentPage:
+      type: object
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocumentBody"
+        nextCursor:
+          type: string
+          format: uuid
+        hasMore:
           type: boolean
     ConflictSummary:
       type: object
