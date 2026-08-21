@@ -3,6 +3,8 @@ package com.noveltea.merge;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -11,6 +13,10 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1")
+@Tag(
+        name = "Conflicts",
+        description = "Sync conflict copies — the sibling documents a rejected write is preserved "
+                + "as — and merging them back into the original.")
 public class MergeController {
 
     private final MergeService merge;
@@ -38,6 +44,13 @@ public class MergeController {
         return merge.get(copyId);
     }
 
+    @Operation(
+            summary = "Resolve a conflict copy back into its original",
+            description = "The client renders the merge; no diff is computed server-side "
+                    + "(only the client's editor understands ProseMirror JSON). Resolving "
+                    + "trashes the copy — never deletes it, so a bad merge stays recoverable. "
+                    + "Refuses a stale baseVersion rather than forking again; the caller "
+                    + "re-opens the updated pair instead.")
     @PostMapping("/conflicts/{copyId}/resolve")
     public Map<String, Object> resolve(
             @AuthenticationPrincipal CurrentUser user,

@@ -1,6 +1,7 @@
 package com.noveltea.sync.dto;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -30,9 +31,24 @@ public final class SyncDtos {
      */
     public record PullResponse(
             List<ChangeRecord> changes,
-            long latestId,
-            boolean hasMore,
-            boolean resyncRequired,
+            @Schema(
+                            description =
+                                    "Highest change id actually served in this response — "
+                                            + "never the feed's true maximum. A client that "
+                                            + "advanced past unserved rows would skip them "
+                                            + "permanently.")
+                    long latestId,
+            @Schema(description = "More rows exist past this page; pull again from latestId.")
+                    boolean hasMore,
+            @Schema(
+                            description =
+                                    "The client's cursor points into history the server can no "
+                                            + "longer explain (purged by retention, or the "
+                                            + "project was restored from an older backup). "
+                                            + "`changes` is empty; the client must rebuild from "
+                                            + "GET /binder plus documents and resume at "
+                                            + "latestId.")
+                    boolean resyncRequired,
             long syncEpoch) {
 
         public PullResponse(List<ChangeRecord> changes, long latestId, boolean hasMore) {
@@ -55,8 +71,24 @@ public final class SyncDtos {
     public record ConflictRecord(
             UUID entityId,
             String entityType,
-            String reason,
-            UUID conflictCopyId,
+            @Schema(
+                            description =
+                                    "One of ConflictReason: version_mismatch (stale "
+                                            + "baseVersion — see conflictCopyId), "
+                                            + "duplicate_create, entity_missing, "
+                                            + "invalid_request, or not_implemented for an "
+                                            + "entity type this push path does not yet handle.",
+                            example = "version_mismatch")
+                    String reason,
+            @Schema(
+                            description =
+                                    "The binder_item holding the client's rejected document "
+                                            + "version, when one was created. Non-null means the "
+                                            + "author's text was preserved elsewhere and needs "
+                                            + "manual reconciliation via the Conflicts "
+                                            + "endpoints; null means nothing was at risk (e.g. a "
+                                            + "tree write, which is last-write-wins).")
+                    UUID conflictCopyId,
             Long serverVersion,
             String detail) {
 

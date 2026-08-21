@@ -1,0 +1,1682 @@
+openapi: 3.1.0
+info:
+  title: NovelTea API
+  description: |
+    Self-hosted, offline-first long-form writing app. Every client keeps a full local replica; this API is a synchronisation point and a compile engine, not where the work lives.
+
+    A few things about the shape of the responses that are easy to get wrong from the schema alone:
+
+    - **A resource the caller may not see returns `404`, never `403`** — a 403 would confirm it exists. Unauthenticated is `401`, so a client knows whether refreshing its token would help.
+    - **`POST /projects/{id}/sync` answers `200` even when some changes conflict.** A conflict is an ordinary outcome, reported per change in the response body (`applied` / `conflicts`), not an HTTP error. A `document` conflict never overwrites or merges — the server keeps its version and the client's is preserved as a sibling "conflict copy" (`conflictCopyId`); see `ConflictReason` for why an individual change was rejected.
+    - **`GET /projects/{id}/sync` can answer `resyncRequired: true`.** The client's cursor points into history the server can no longer explain (purged, or the project was restored from backup) and must discard it, rebuild from `GET /binder` plus documents, and resume at the returned `latestId`.
+    - **Commercial features answer `501`** with error code `unavailable_in_this_edition`. This build is Core: sharing, extra export formats and cloud destinations live in a separate paid module and are reported as an upgrade path, never a stack trace.
+    - **Compiling is asynchronous.** `POST /projects/{id}/compile` returns a job id immediately; poll `GET /compile-jobs/{id}` until its status is terminal, then `GET /compile-jobs/{id}/download`.
+    - **`POST /auth/password-reset` always answers `202`**, whether or not the address is registered — a different answer would make it an account-enumeration oracle.
+  version: v1
+servers:
+- url: /
+  description: This server
+security:
+- bearerAuth: []
+tags:
+- name: Account
+  description: Password reset and account deletion.
+- name: Comments
+  description: Anchored annotations and replies on a document.
+- name: Binder
+  description: "The document/folder tree: create, rename, move, trash and restore."
+- name: Snapshots
+  description: "Point-in-time document copies: capture, list, restore."
+- name: Projects
+  description: "Project lifecycle: create, read, update, soft-delete, restore, purge."
+- name: Search
+  description: "Full-text search across a project's titles, synopses, body text and\
+    \ notes."
+- name: Sync
+  description: "The offline sync protocol. Clients pull an append-only change feed\
+    \ and push local changes; see each operation for how conflicts and resync are\
+    \ reported — both are ordinary outcomes, not errors."
+- name: Conflicts
+  description: Sync conflict copies — the sibling documents a rejected write is preserved
+    as — and merging them back into the original.
+- name: Health
+  description: "Unauthenticated liveness and readiness, for container orchestration."
+- name: Compile Jobs
+  description: "Asynchronous manuscript export: submit, poll for completion, download.\
+    \ A worker process does the actual rendering; these endpoints only queue and report\
+    \ on it."
+- name: Auth
+  description: "Registration, login, device pairing, and the devices a session can\
+    \ see."
+- name: Compile
+  description: What this installation can export to.
+paths:
+  /api/v1/snapshots/{snapshotId}/restore:
+    post:
+      tags:
+      - Snapshots
+      summary: Restore a document to a snapshot
+      description: "Itself undoable: the pre-restore state is captured automatically\
+        \ first, so restoring to the wrong version does not lose the newer one. Refuses\
+        \ a stale baseVersion so it cannot clobber an edit made on another device\
+        \ meanwhile."
+      operationId: restore
+      parameters:
+      - name: snapshotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+                  format: int64
+  /api/v1/projects:
+    get:
+      tags:
+      - Projects
+      operationId: list
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+    post:
+      tags:
+      - Projects
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Project"
+  /api/v1/projects/{projectId}/sync:
+    get:
+      tags:
+      - Sync
+      summary: Pull the change feed since a cursor
+      description: |-
+        Returns rows appended since `since` (exclusive), each carrying the entity's current state. Always answers 200; the response body, not the status code, carries the two conditions a client must check:
+
+        - **`resyncRequired: true`** — the cursor points into history the server can no longer explain, either because it was purged by retention or because the project was restored from an older backup (`syncEpoch` changed). `changes` is empty; the client must discard its cursor, rebuild from `GET /binder` plus documents, and resume pulling from `latestId`.
+        - **`hasMore: true`** — more rows exist past this page; pull again from `latestId` before considering the client caught up.
+
+        `latestId` is the highest id *actually served*, never the feed's true maximum — advancing past unserved rows would skip them permanently.
+      operationId: pull
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+          default: 0
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 200
+      - name: epoch
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PullResponse"
+    post:
+      tags:
+      - Sync
+      summary: Push local changes
+      description: |-
+        Applies each change independently and always answers 200 — a per-change conflict is a normal, expected outcome of concurrent editing, not a request-level failure. The response separates `applied` from `conflicts` so a client can retry only what actually failed.
+
+        A `document` write that loses a conflict is never merged and never dropped: the server keeps its own version, and the client's is preserved as a sibling "conflict copy" binder item, whose id comes back as `conflictCopyId` on the `ConflictRecord` — non-null there means the author's text survived elsewhere and needs manual reconciliation via the Conflicts endpoints. Tree writes (`binder_item`) are last-write-wins instead; only document content gets a conflict copy.
+
+        See `ConflictReason` for the `reason` values: `version_mismatch` (stale `baseVersion` — the conflict-copy case above), `duplicate_create`, `entity_missing`, `invalid_request`, and `not_implemented` for entity types this push path does not yet handle.
+      operationId: push
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PushResponse"
+  /api/v1/projects/{projectId}/restore:
+    post:
+      tags:
+      - Projects
+      summary: Restore a soft-deleted project
+      description: "The one place a deleted project is still visible to its owner\
+        \ — everywhere else, deletion makes it answer 404 like it never existed."
+      operationId: restore_1
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Project"
+  /api/v1/projects/{projectId}/compile:
+    post:
+      tags:
+      - Compile Jobs
+      summary: Queue a compile job
+      description: |-
+        Returns immediately with a job id; a separate worker process does the actual rendering. Poll GET /compile-jobs/{jobId} for status, then GET /compile-jobs/{jobId}/download once it reports a terminal status.
+
+        Answers 501 (unavailable_in_this_edition) for a format or destination this build does not ship — this is Core, which ships only md/html/txt and the `download`/`server` destinations; `cloud` and every other export format are commercial. Identical pending requests are deduplicated: resubmitting the same not-yet-finished job returns the existing job id rather than queuing a duplicate.
+      operationId: submit
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompileRequest"
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+                  format: uuid
+  /api/v1/projects/{projectId}/binder-items:
+    post:
+      tags:
+      - Binder
+      operationId: create_1
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateItemRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+                  format: uuid
+  /api/v1/documents/{documentId}/snapshots:
+    get:
+      tags:
+      - Snapshots
+      operationId: list_1
+      parameters:
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SnapshotSummary"
+    post:
+      tags:
+      - Snapshots
+      operationId: capture
+      parameters:
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CaptureRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+                  format: uuid
+  /api/v1/documents/{documentId}/comments:
+    get:
+      tags:
+      - Comments
+      operationId: list_2
+      parameters:
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Comment"
+    post:
+      tags:
+      - Comments
+      operationId: create_2
+      parameters:
+      - name: documentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+                  format: uuid
+  /api/v1/conflicts/{copyId}/resolve:
+    post:
+      tags:
+      - Conflicts
+      summary: Resolve a conflict copy back into its original
+      description: "The client renders the merge; no diff is computed server-side\
+        \ (only the client's editor understands ProseMirror JSON). Resolving trashes\
+        \ the copy — never deletes it, so a bad merge stays recoverable. Refuses a\
+        \ stale baseVersion rather than forking again; the caller re-opens the updated\
+        \ pair instead."
+      operationId: resolve
+      parameters:
+      - name: copyId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+  /api/v1/comments/{commentId}/resolve:
+    post:
+      tags:
+      - Comments
+      operationId: resolve_1
+      parameters:
+      - name: commentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+  /api/v1/binder-items/{itemId}/trash:
+    post:
+      tags:
+      - Binder
+      operationId: trash
+      parameters:
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+  /api/v1/binder-items/{itemId}/restore:
+    post:
+      tags:
+      - Binder
+      operationId: restore_2
+      parameters:
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+  /api/v1/auth/register:
+    post:
+      tags:
+      - Auth
+      summary: Register a new account
+      description: "Public — this and login are the only ways to obtain a token. Every\
+        \ auth failure elsewhere in this API returns one identical message, so a caller\
+        \ cannot distinguish \"no such account\" from \"wrong password\"."
+      operationId: register
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialsRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+  /api/v1/auth/refresh:
+    post:
+      tags:
+      - Auth
+      summary: Rotate a refresh token
+      description: "Public. Refresh tokens rotate on every use and are single-use:\
+        \ a leaked token works at most once, and the legitimate device's next refresh\
+        \ failing is a detectable signal that it was stolen."
+      operationId: refresh
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+  /api/v1/auth/password-reset:
+    post:
+      tags:
+      - Account
+      summary: Request a password reset email
+      description: "Public. Always answers 202, whether or not the address is registered\
+        \ — a different answer would make this an account-enumeration oracle. If mail\
+        \ is not configured (spring.mail.host unset), the reset link is written to\
+        \ the log instead of sent."
+      operationId: requestReset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetRequest"
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+  /api/v1/auth/password-reset/confirm:
+    post:
+      tags:
+      - Account
+      summary: Complete a password reset
+      description: "Public. Signs out every device holding a refresh token, reported\
+        \ as devicesSignedOut."
+      operationId: confirmReset
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetConfirmRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+  /api/v1/auth/pairing-codes:
+    post:
+      tags:
+      - Auth
+      operationId: createPairingCode
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+  /api/v1/auth/pair:
+    post:
+      tags:
+      - Auth
+      summary: Redeem a pairing code
+      description: Public. Redeems a short code minted by an already-trusted device
+        (see POST /auth/pairing-codes) to onboard a second one.
+      operationId: pair
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+  /api/v1/auth/login:
+    post:
+      tags:
+      - Auth
+      summary: Log in
+      description: Public.
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CredentialsRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SessionResponse"
+  /api/v1/account/deletion:
+    get:
+      tags:
+      - Account
+      operationId: deletionStatus
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/DeletionStatus"
+    post:
+      tags:
+      - Account
+      summary: Schedule account deletion
+      description: "Requires the current password even though the caller is already\
+        \ authenticated, so a borrowed unlocked laptop cannot destroy an account.\
+        \ Deletion happens after a grace period (noveltea.account.deletion-grace),\
+        \ cancellable via DELETE on this same path."
+      operationId: requestDeletion
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteAccountRequest"
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/DeletionStatus"
+    delete:
+      tags:
+      - Account
+      operationId: cancelDeletion
+      responses:
+        "204":
+          description: No Content
+  /api/v1/projects/{projectId}:
+    get:
+      tags:
+      - Projects
+      summary: Get a project
+      description: "A project the caller does not own answers 404, identically to\
+        \ one that does not exist — a 403 would confirm it exists to someone who was\
+        \ never granted access."
+      operationId: get
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "404":
+          description: "Not found, or not visible to the caller."
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Project"
+    delete:
+      tags:
+      - Projects
+      operationId: delete
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+    patch:
+      tags:
+      - Projects
+      operationId: update
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/Project"
+  /api/v1/comments/{commentId}:
+    delete:
+      tags:
+      - Comments
+      operationId: delete_1
+      parameters:
+      - name: commentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+    patch:
+      tags:
+      - Comments
+      operationId: edit
+      parameters:
+      - name: commentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditCommentRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+  /api/v1/binder-items/{itemId}:
+    patch:
+      tags:
+      - Binder
+      operationId: update_1
+      parameters:
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateItemRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+  /health:
+    get:
+      tags:
+      - Health
+      summary: Liveness
+      description: The process is up. Never touches a dependency — this cannot fail
+        as a proxy for the database being reachable; use /health/ready for that.
+      operationId: health
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+  /health/ready:
+    get:
+      tags:
+      - Health
+      summary: Readiness
+      description: "Touches the database. 503 (not 500) when Postgres is unreachable,\
+        \ with no detail in the body — this endpoint needs no authentication and must\
+        \ not reveal anything about the deployment."
+      operationId: ready
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+  /api/v1/snapshots/{snapshotId}:
+    get:
+      tags:
+      - Snapshots
+      operationId: get_1
+      parameters:
+      - name: snapshotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SnapshotDetail"
+    delete:
+      tags:
+      - Snapshots
+      operationId: delete_2
+      parameters:
+      - name: snapshotId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+  /api/v1/projects/{projectId}/search:
+    get:
+      tags:
+      - Search
+      summary: Search a project
+      description: "Weighted: title beats synopsis beats body beats notes. Synopses\
+        \ and notes are searchable although they are never exported — they are what\
+        \ an author searches to find a scene again. Trashed items are excluded unless\
+        \ includeTrashed=true; tombstoned ones never appear. Malformed query syntax\
+        \ yields no results rather than an error."
+      operationId: search
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: includeTrashed
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 50
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SearchResults"
+  /api/v1/projects/{projectId}/conflicts:
+    get:
+      tags:
+      - Conflicts
+      operationId: list_3
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConflictSummary"
+  /api/v1/projects/{projectId}/compile/formats:
+    get:
+      tags:
+      - Compile
+      summary: List supported and unavailable export formats
+      description: "Unavailable formats are reported explicitly rather than omitted,\
+        \ so a client can show them as an upgrade rather than pretend they do not\
+        \ exist. This is a Core build: commercial formats (rtf, docx, odt, epub, pdf)\
+        \ are always unavailable here; requesting one from POST .../compile answers\
+        \ 501."
+      operationId: formats
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    type: string
+  /api/v1/projects/{projectId}/compile-jobs:
+    get:
+      tags:
+      - Compile Jobs
+      operationId: recent
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CompileJob"
+  /api/v1/projects/{projectId}/binder:
+    get:
+      tags:
+      - Binder
+      operationId: tree
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BinderNode"
+  /api/v1/projects/deleted:
+    get:
+      tags:
+      - Projects
+      operationId: listDeleted
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Project"
+  /api/v1/devices:
+    get:
+      tags:
+      - Auth
+      operationId: devices
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DeviceInfo"
+  /api/v1/conflicts/{copyId}:
+    get:
+      tags:
+      - Conflicts
+      operationId: detail
+      parameters:
+      - name: copyId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ConflictDetail"
+  /api/v1/compile-jobs/{jobId}:
+    get:
+      tags:
+      - Compile Jobs
+      summary: Poll a compile job's status
+      description: isTerminal on the returned job is what a client should loop on
+        before calling .../download.
+      operationId: status
+      parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CompileJob"
+  /api/v1/compile-jobs/{jobId}/download:
+    get:
+      tags:
+      - Compile Jobs
+      summary: Download a finished compile job's file
+      description: 410 (Gone) once a `download`-destination export has expired (noveltea.compile.download-ttl)
+        or was never produced. A `server` destination export is kept indefinitely
+        in the operator's mounted storage instead.
+      operationId: download
+      parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+  /api/v1/projects/{projectId}/trash:
+    delete:
+      tags:
+      - Binder
+      operationId: emptyTrash
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: object
+                additionalProperties:
+                  type: integer
+                  format: int32
+  /api/v1/projects/{projectId}/purge:
+    delete:
+      tags:
+      - Projects
+      summary: Permanently destroy a project and everything in it
+      description: "Separate verb and path from delete on purpose: not something a\
+        \ client should reach by accident. Irreversible."
+      operationId: purge
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+  /api/v1/devices/{deviceId}:
+    delete:
+      tags:
+      - Auth
+      operationId: revoke
+      parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+components:
+  schemas:
+    RestoreRequest:
+      type: object
+      properties:
+        baseVersion:
+          type: integer
+          format: int64
+    CreateProjectRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        settings:
+          $ref: "#/components/schemas/JsonNode"
+    JsonNode:
+      type: object
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        settings:
+          $ref: "#/components/schemas/JsonNode"
+        documentCount:
+          type: integer
+          format: int32
+        wordCount:
+          type: integer
+          format: int64
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+    ChangeRequest:
+      type: object
+      properties:
+        entityType:
+          type: string
+        entityId:
+          type: string
+          format: uuid
+        op:
+          type: string
+        baseVersion:
+          type: integer
+          format: int64
+        data:
+          $ref: "#/components/schemas/JsonNode"
+    PushRequest:
+      type: object
+      properties:
+        since:
+          type: integer
+          format: int64
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeRequest"
+    AppliedChange:
+      type: object
+      properties:
+        entityId:
+          type: string
+          format: uuid
+        entityType:
+          type: string
+        version:
+          type: integer
+          format: int64
+    ConflictRecord:
+      type: object
+      properties:
+        entityId:
+          type: string
+          format: uuid
+        entityType:
+          type: string
+        reason:
+          type: string
+          description: "One of ConflictReason: version_mismatch (stale baseVersion\
+            \ — see conflictCopyId), duplicate_create, entity_missing, invalid_request,\
+            \ or not_implemented for an entity type this push path does not yet handle."
+          example: version_mismatch
+        conflictCopyId:
+          type: string
+          format: uuid
+          description: "The binder_item holding the client's rejected document version,\
+            \ when one was created. Non-null means the author's text was preserved\
+            \ elsewhere and needs manual reconciliation via the Conflicts endpoints;\
+            \ null means nothing was at risk (e.g. a tree write, which is last-write-wins)."
+        serverVersion:
+          type: integer
+          format: int64
+        detail:
+          type: string
+    PushResponse:
+      type: object
+      properties:
+        applied:
+          type: array
+          items:
+            $ref: "#/components/schemas/AppliedChange"
+        conflicts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConflictRecord"
+        latestId:
+          type: integer
+          format: int64
+    CompileRequest:
+      type: object
+      properties:
+        format:
+          type: string
+        destination:
+          type: string
+        presetId:
+          type: string
+          format: uuid
+        inlineConfig:
+          $ref: "#/components/schemas/JsonNode"
+    CreateItemRequest:
+      type: object
+      properties:
+        parentId:
+          type: string
+          format: uuid
+        type:
+          type: string
+        title:
+          type: string
+        afterSiblingId:
+          type: string
+          format: uuid
+    CaptureRequest:
+      type: object
+      properties:
+        label:
+          type: string
+        automatic:
+          type: boolean
+    CreateCommentRequest:
+      type: object
+      properties:
+        body:
+          type: string
+        anchor:
+          $ref: "#/components/schemas/JsonNode"
+        parentCommentId:
+          type: string
+          format: uuid
+    ResolveRequest:
+      type: object
+      properties:
+        content:
+          $ref: "#/components/schemas/JsonNode"
+        baseVersion:
+          type: integer
+          format: int64
+    CredentialsRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        deviceName:
+          type: string
+        platform:
+          type: string
+    SessionResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          format: int64
+    RefreshRequest:
+      type: object
+      properties:
+        refreshToken:
+          type: string
+    ResetRequest:
+      type: object
+      properties:
+        email:
+          type: string
+    ResetConfirmRequest:
+      type: object
+      properties:
+        token:
+          type: string
+        newPassword:
+          type: string
+    PairRequest:
+      type: object
+      properties:
+        code:
+          type: string
+        deviceName:
+          type: string
+        platform:
+          type: string
+    DeleteAccountRequest:
+      type: object
+      properties:
+        password:
+          type: string
+    DeletionStatus:
+      type: object
+      properties:
+        pending:
+          type: boolean
+        requestedAt:
+          type: string
+          format: date-time
+        scheduledFor:
+          type: string
+          format: date-time
+    UpdateProjectRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        settings:
+          $ref: "#/components/schemas/JsonNode"
+    EditCommentRequest:
+      type: object
+      properties:
+        body:
+          type: string
+    UpdateItemRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        parentId:
+          type: string
+          format: uuid
+        afterSiblingId:
+          type: string
+          format: uuid
+    SnapshotDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        documentId:
+          type: string
+          format: uuid
+        label:
+          type: string
+        automatic:
+          type: boolean
+        wordCount:
+          type: integer
+          format: int32
+        content:
+          $ref: "#/components/schemas/JsonNode"
+        createdAt:
+          type: string
+          format: date-time
+    ChangeRecord:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        entityType:
+          type: string
+        entityId:
+          type: string
+          format: uuid
+        op:
+          type: string
+        deviceId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        data:
+          $ref: "#/components/schemas/JsonNode"
+    PullResponse:
+      type: object
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeRecord"
+        latestId:
+          type: integer
+          format: int64
+          description: Highest change id actually served in this response — never
+            the feed's true maximum. A client that advanced past unserved rows would
+            skip them permanently.
+        hasMore:
+          type: boolean
+          description: More rows exist past this page; pull again from latestId.
+        resyncRequired:
+          type: boolean
+          description: "The client's cursor points into history the server can no\
+            \ longer explain (purged by retention, or the project was restored from\
+            \ an older backup). `changes` is empty; the client must rebuild from GET\
+            \ /binder plus documents and resume at latestId."
+        syncEpoch:
+          type: integer
+          format: int64
+    SearchHit:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        type:
+          type: string
+        parentId:
+          type: string
+          format: uuid
+        rank:
+          type: number
+          format: double
+        snippet:
+          type: string
+        matchedTitle:
+          type: boolean
+        inTrash:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+    SearchResults:
+      type: object
+      properties:
+        query:
+          type: string
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+        truncated:
+          type: boolean
+    ConflictSummary:
+      type: object
+      properties:
+        copyId:
+          type: string
+          format: uuid
+        originalId:
+          type: string
+          format: uuid
+        originalTitle:
+          type: string
+        copyTitle:
+          type: string
+        forkedFromVersion:
+          type: integer
+          format: int64
+        originalVersion:
+          type: integer
+          format: int64
+        forkedAt:
+          type: string
+          format: date-time
+    CompileJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        format:
+          type: string
+        destination:
+          type: string
+        status:
+          type: string
+        outputFilename:
+          type: string
+        outputBytes:
+          type: integer
+          format: int64
+        wordCount:
+          type: integer
+          format: int32
+        warnings:
+          $ref: "#/components/schemas/JsonNode"
+        errorMessage:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        terminal:
+          type: boolean
+    BinderNode:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        parentId:
+          type: string
+          format: uuid
+        type:
+          type: string
+        title:
+          type: string
+        orderKey:
+          type: string
+        labelId:
+          type: string
+          format: uuid
+        statusId:
+          type: string
+          format: uuid
+        trashedFromParentId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          format: int64
+        updatedAt:
+          type: string
+          format: date-time
+    SnapshotSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        documentId:
+          type: string
+          format: uuid
+        label:
+          type: string
+        automatic:
+          type: boolean
+        wordCount:
+          type: integer
+          format: int32
+        createdByDeviceId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+    Comment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        documentId:
+          type: string
+          format: uuid
+        parentCommentId:
+          type: string
+          format: uuid
+        authorUserId:
+          type: string
+          format: uuid
+        authorEmail:
+          type: string
+        body:
+          type: string
+        anchor:
+          $ref: "#/components/schemas/JsonNode"
+        orphaned:
+          type: boolean
+        resolvedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          format: int64
+    DeviceInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        platform:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        lastSyncedAt:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+    ConflictDetail:
+      type: object
+      properties:
+        copyId:
+          type: string
+          format: uuid
+        originalId:
+          type: string
+          format: uuid
+        originalTitle:
+          type: string
+        originalContent:
+          $ref: "#/components/schemas/JsonNode"
+        originalVersion:
+          type: integer
+          format: int64
+        copyContent:
+          $ref: "#/components/schemas/JsonNode"
+        forkedFromVersion:
+          type: integer
+          format: int64
+        forkedAt:
+          type: string
+          format: date-time
+  securitySchemes:
+    bearerAuth:
+      type: http
+      description: "Access token from /auth/register, /auth/login, /auth/refresh or\
+        \ /auth/pair. 15-minute lifetime by default (noveltea.auth.access-token-ttl)."
+      scheme: bearer
+      bearerFormat: JWT

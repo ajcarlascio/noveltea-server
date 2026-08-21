@@ -4,15 +4,18 @@ import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
 import com.noveltea.snapshot.SnapshotService.SnapshotDetail;
 import com.noveltea.snapshot.SnapshotService.SnapshotSummary;
+import io.swagger.v3.oas.annotations.Operation;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1")
+@Tag(name = "Snapshots", description = "Point-in-time document copies: capture, list, restore.")
 public class SnapshotController {
 
     private final SnapshotService snapshots;
@@ -23,7 +26,10 @@ public class SnapshotController {
         this.access = access;
     }
 
-    /** @param automatic omitted or false means a manual snapshot, which syncs. */
+    /**
+     * @param automatic omitted or false means a manual snapshot, which syncs. Automatic
+     *     snapshots stay local and are pruned; manual ones sync and are kept forever.
+     */
     public record CaptureRequest(String label, Boolean automatic) {}
 
     public record RestoreRequest(long baseVersion) {}
@@ -55,6 +61,12 @@ public class SnapshotController {
         return snapshots.get(snapshotId);
     }
 
+    @Operation(
+            summary = "Restore a document to a snapshot",
+            description = "Itself undoable: the pre-restore state is captured automatically "
+                    + "first, so restoring to the wrong version does not lose the newer one. "
+                    + "Refuses a stale baseVersion so it cannot clobber an edit made on "
+                    + "another device meanwhile.")
     @PostMapping("/snapshots/{snapshotId}/restore")
     public Map<String, Long> restore(
             @AuthenticationPrincipal CurrentUser user,

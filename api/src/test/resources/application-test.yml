@@ -22,6 +22,14 @@ logging:
   level:
     liquibase: WARN
 
+# Off in tests: nothing exercises it, and IdorSweepTest enumerates the handler mapping,
+# so leaving springdoc's own controllers out keeps that sweep scoped to /api/v1 routes.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
 noveltea:
   auth:
     # Test-only key. Never used outside the test profile.

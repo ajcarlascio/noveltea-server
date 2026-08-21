@@ -1,5 +1,7 @@
 package com.noveltea.web;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
  * sending it traffic. Neither endpoint reveals anything about the deployment.
  */
 @RestController
+@Tag(name = "Health", description = "Unauthenticated liveness and readiness, for container orchestration.")
 public class HealthController {
 
     private final JdbcClient jdbc;
@@ -23,11 +26,22 @@ public class HealthController {
     }
 
     /** Liveness: the process is up. Never touches a dependency. */
+    @Operation(
+            summary = "Liveness",
+            description = "The process is up. Never touches a dependency — this cannot fail "
+                    + "as a proxy for the database being reachable; use /health/ready for that.",
+            security = {})
     @GetMapping("/health")
     public Map<String, String> health() {
         return Map.of("status", "up");
     }
 
+    @Operation(
+            summary = "Readiness",
+            description = "Touches the database. 503 (not 500) when Postgres is unreachable, "
+                    + "with no detail in the body — this endpoint needs no authentication and "
+                    + "must not reveal anything about the deployment.",
+            security = {})
     @GetMapping("/health/ready")
     public ResponseEntity<Map<String, String>> ready() {
         try {

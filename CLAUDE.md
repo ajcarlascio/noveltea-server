@@ -347,6 +347,27 @@ Markdown escaping is deliberately narrow: escaping every `.` and `-` puts backsl
 
 Tests parse HTML output with an independent parser rather than comparing it to a string the serializer produced, and one property test asserts every authored word survives into every format. See `packages/compile/README.md`.
 
+## API documentation is generated, never written
+
+`docs/api/openapi.yaml` is scraped from the running application by
+`./gradlew :api:generateOpenApiDocs`, which `build` depends on. Describing a route by hand
+produces a document that is wrong the first time somebody forgets to update it, which is
+worse than no document — a client written against it fails in ways that look like server
+bugs.
+
+- **The generation step boots the real app and needs a live Postgres**, not the
+  Testcontainers one. Without it the plugin waits out its timeout and the failure names
+  nothing useful.
+- **`OpenApiSpecFreshnessTest` is what actually holds the line.** It compares the checked-in
+  spec to the handler mapping in both directions, so the spec cannot drift on a machine that
+  skipped generation. The spec is declared an input to the `test` task; without that Gradle
+  calls `test` up to date when only the spec changed, and the guard does not run.
+- **Both `/v3/api-docs` and `/swagger-ui.html` are off by default** and gated behind
+  `NOVELTEA_API_DOCS_ENABLED`. The spec is a complete map of every route and schema, and a
+  self-hosted instance may face the open internet; publishing it is an operator's choice.
+  They are `permitAll` and deliberately outside `/api/v1`, so `IdorSweepTest`'s invariant is
+  untouched by them.
+
 ## Constants and limits
 
 - **Closed value sets are enums in `com.noveltea.model`**, each with a `wire()` form matching its `text` column and CHECK constraint. Adding a value means editing one enum, not hunting string literals. Do not reintroduce bare string comparisons for entity types, ops, formats, roles or platforms.

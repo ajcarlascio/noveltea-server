@@ -6,12 +6,18 @@ springDependencyManagement = "1.1.7"
 liquibaseGradle = "2.2.2"
 picocli = "4.7.6"
 testcontainers = "1.20.4"
+# Apache-2.0. Runtime OpenAPI/Swagger UI generation and the build-time plugin that
+# writes the spec to a file — both from the same project, kept in step deliberately.
+springdocOpenapi = "2.8.6"
+springdocOpenapiGradlePlugin = "1.9.0"
 
 [libraries]
 picocli = { module = "info.picocli:picocli", version.ref = "picocli" }
 testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+springdoc-openapi-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdocOpenapi" }
 
 [plugins]
 springBoot = { id = "org.springframework.boot", version.ref = "springBoot" }
 springDependencyManagement = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
 liquibase = { id = "org.liquibase.gradle", version.ref = "liquibaseGradle" }
+springdocOpenapiGradle = { id = "org.springdoc.openapi-gradle-plugin", version.ref = "springdocOpenapiGradlePlugin" }

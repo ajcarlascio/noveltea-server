@@ -33,6 +33,15 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/health", "/health/ready").permitAll()
+                        // Off by default (see application.yml); permitted here so that when
+                        // an operator does turn them on, they are reachable without a token —
+                        // a route needing auth to view its own documentation is not useful.
+                        // Deliberately outside /api/v1, so IdorSweepTest's invariant (nothing
+                        // under that prefix is reachable unauthenticated) is untouched by them.
+                        .requestMatchers(
+                                "/v3/api-docs", "/v3/api-docs.yaml", "/v3/api-docs.json",
+                                "/v3/api-docs/**", "/swagger-ui.html", "/swagger-ui/**")
+                        .permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 "/api/v1/auth/register",
                                 "/api/v1/auth/login",
