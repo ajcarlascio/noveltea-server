@@ -6,6 +6,7 @@ export type {
   SqliteAdapter,
   SqlValue,
 } from "./types.ts";
+export { ENTITY_TYPES } from "./types.ts";
 export { MIGRATIONS } from "./generated/migrations.ts";
 export {
   runMigrations,

@@ -27,15 +27,28 @@ export interface SqliteAdapter {
 
 export type ChangeOp = "create" | "update" | "delete";
 
-export type EntityType =
-  | "binder_item"
-  | "document"
-  | "taxonomy"
-  | "custom_metadata_field"
-  | "custom_metadata_value"
-  | "collection"
-  | "collection_item"
-  | "compile_preset";
+/**
+ * What `pending_change.entity_type` accepts.
+ *
+ * A runtime list, not a bare type, so a test can hold it against the CHECK constraint
+ * in the migrations. The two drifting apart is not hypothetical: snapshot and comment
+ * were added to the schema and to nothing else, and queueing either failed at runtime
+ * while the type said it was fine.
+ */
+export const ENTITY_TYPES = [
+  "binder_item",
+  "document",
+  "taxonomy",
+  "custom_metadata_field",
+  "custom_metadata_value",
+  "collection",
+  "collection_item",
+  "compile_preset",
+  "snapshot",
+  "comment",
+] as const;
+
+export type EntityType = (typeof ENTITY_TYPES)[number];
 
 export interface PendingChange {
   id: number;
