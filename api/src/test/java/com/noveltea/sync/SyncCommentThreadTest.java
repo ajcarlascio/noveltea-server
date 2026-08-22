@@ -217,6 +217,43 @@ class SyncCommentThreadTest extends AbstractPostgresTest {
     }
 
     @Test
+    @DisplayName("A FULL-STATE PAYLOAD CAN RESOLVE A COMMENT SOMEBODY ELSE WROTE")
+    void fullStatePayloadResolvesWithoutLookingLikeAnEdit() {
+        // The client's outbox coalesces two updates to one entity by replacing the
+        // payload, so it sends the comment's whole state — body included — or an edit
+        // followed by a resolve loses the edit. An unchanged body must therefore not
+        // count as editing, or nobody could ever close a thread they had not written.
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "a note", null, null);
+        jdbc.sql("UPDATE comment SET author_user_id = :other WHERE id = :id")
+                .param("other", someoneElse()).param("id", thread).update();
+
+        ObjectNode data = mapper.createObjectNode();
+        data.put("body", "a note").put("resolved", true);
+        PushResponse response = sync.push(projectId, deviceA,
+                List.of(new ChangeRequest("comment", thread, "update", null, data)));
+
+        assertThat(response.conflicts()).isEmpty();
+        assertThat(isResolved(thread)).isTrue();
+    }
+
+    @Test
+    @DisplayName("one payload carrying both an edit and a resolve applies both")
+    void bodyAndResolutionTravelTogether() {
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "a note", null, null);
+
+        ObjectNode data = mapper.createObjectNode();
+        data.put("body", "a better note").put("resolved", true);
+        sync.push(projectId, deviceA,
+                List.of(new ChangeRequest("comment", thread, "update", null, data)));
+
+        assertThat(isResolved(thread)).isTrue();
+        assertThat(jdbc.sql("SELECT body FROM comment WHERE id = :id")
+                .param("id", thread).query(String.class).single()).isEqualTo("a better note");
+    }
+
+    @Test
     @DisplayName("editing someone else's comment is still refused")
     void editingIsStillTheAuthorsAlone() {
         UUID docId = seedDocument("Chapter One", "V", "prose");
