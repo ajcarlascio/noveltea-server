@@ -210,7 +210,8 @@ Comments are annotations on a document, optionally anchored to a passage, thread
 
 - **An anchor stores the quoted text alongside its offsets.** ProseMirror positions shift with every edit, so orphaning is judged by whether the quoted words are still in the document, not by whether the offsets still line up. A comment whose text has gone is reported **orphaned** — never moved and never deleted. Relocating an editor's note to the wrong sentence is worse than admitting it lost its place.
 - **Authorship is server-assigned**, which is why comments are hand-written in sync rather than spec-driven: taking the author from a payload would let a client attribute a remark to someone else.
-- **Only the author edits or deletes; anyone with write access resolves.** Resolving is a shared editorial act; rewording someone else's note is not.
+- **Only the author edits or deletes; anyone with write access resolves.** Resolving is a shared editorial act; rewording someone else's note is not. The sync push path applies the same split, so the author check gates a `body` change or a delete but not a resolve.
+- **`resolved` on a comment update payload is tri-state.** Present means set it; absent means leave it alone. Read as a plain boolean, an update naming any other field — or one this version does not understand — would silently reopen a thread somebody had already closed.
 - Deletes are soft, so the deletion propagates and threads keep their shape.
 
 **Mail** is one `Mailer` bean chosen at startup: SMTP when `spring.mail.host` is set, otherwise a fallback that logs and says loudly that a reset link in a log file is a credential. Decided at runtime rather than by two `@ConditionalOnMissingBean` beans, which is only dependable inside auto-configuration and produced a bean-definition clash here.
