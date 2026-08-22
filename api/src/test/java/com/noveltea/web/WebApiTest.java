@@ -106,6 +106,37 @@ class WebApiTest extends AbstractPostgresTest {
     }
 
     @Test
+    @DisplayName("THE FORMATS ENDPOINT REPORTS DESTINATIONS IT CANNOT DO, NOT ONLY FORMATS")
+    void formatsReportsDestinationsBothWays() throws Exception {
+        // Same argument this endpoint already makes for formats: a destination that is
+        // omitted looks like one the software cannot do. Reported and disabled, cloud
+        // reads as an upgrade. Without this a client can only offer it and let the
+        // submission come back 501, which is the same mistake inverted.
+        Session owner = register();
+        UUID owned = UUID.randomUUID();
+        jdbc.sql("INSERT INTO project (id, owner_id, title) VALUES (:id, :o, 'Mine')")
+                .param("id", owned).param("o", owner.userId()).update();
+
+        JsonNode body = body(mvc.perform(get("/api/v1/projects/{id}/compile/formats", owned)
+                        .header("Authorization", "Bearer " + owner.accessToken()))
+                .andReturn());
+
+        assertThat(textList(body, "destinations")).containsExactlyInAnyOrder("download", "server");
+        assertThat(textList(body, "unavailableDestinations"))
+                .as("a Core build says plainly that cloud is not part of it")
+                .containsExactly("cloud");
+        // The formats half must keep working exactly as before.
+        assertThat(textList(body, "supported")).contains("txt", "md", "html");
+        assertThat(textList(body, "unavailable")).contains("docx", "epub", "pdf");
+    }
+
+    private static java.util.List<String> textList(JsonNode body, String field) {
+        java.util.List<String> values = new java.util.ArrayList<>();
+        body.get(field).forEach(node -> values.add(node.asText()));
+        return values;
+    }
+
+    @Test
     @DisplayName("errors share one shape: error, message, path, timestamp")
     void errorsShareOneShape() throws Exception {
         MvcResult result = mvc.perform(post("/api/v1/auth/login")

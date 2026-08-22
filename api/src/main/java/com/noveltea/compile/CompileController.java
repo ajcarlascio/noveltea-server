@@ -2,6 +2,7 @@ package com.noveltea.compile;
 
 import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
+import com.noveltea.model.CompileDestination;
 import com.noveltea.model.ExportFormat;
 import io.swagger.v3.oas.annotations.Operation;
 import java.util.Arrays;
@@ -18,10 +19,13 @@ import org.springframework.web.bind.annotation.*;
 public class CompileController {
 
     private final ExportProvider exports;
+    private final DestinationProvider destinations;
     private final ProjectAccess access;
 
-    public CompileController(ExportProvider exports, ProjectAccess access) {
+    public CompileController(
+            ExportProvider exports, DestinationProvider destinations, ProjectAccess access) {
         this.exports = exports;
+        this.destinations = destinations;
         this.access = access;
     }
 
@@ -48,6 +52,20 @@ public class CompileController {
         List<String> unavailable = Arrays.stream(ExportFormat.values())
                 .filter(format -> !exports.supports(format)).map(ExportFormat::wire).toList();
 
-        return Map.of("supported", supported, "unavailable", unavailable);
+        // Destinations answer the same question about the same request and are gated the
+        // same way, so they are reported the same way. Without them a client cannot show
+        // cloud as an upgrade — it can only offer it and let the submission fail with a
+        // 501, which is the "pretend it does not exist" outcome inverted.
+        List<String> availableDestinations = Arrays.stream(CompileDestination.values())
+                .filter(destinations::supports).map(CompileDestination::wire).toList();
+        List<String> unavailableDestinations = Arrays.stream(CompileDestination.values())
+                .filter(destination -> !destinations.supports(destination))
+                .map(CompileDestination::wire).toList();
+
+        return Map.of(
+                "supported", supported,
+                "unavailable", unavailable,
+                "destinations", availableDestinations,
+                "unavailableDestinations", unavailableDestinations);
     }
 }
