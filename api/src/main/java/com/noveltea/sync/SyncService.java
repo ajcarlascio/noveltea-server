@@ -440,12 +440,42 @@ public class SyncService {
                     }
                     return;
                 }
-                UUID author = jdbc.sql("SELECT author_user_id FROM comment WHERE id = :id")
-                        .param("id", change.entityId()).query(UUID.class).optional().orElse(null);
-                if (author != null && !author.equals(actor)) {
+
+                Map<String, Object> stored = jdbc
+                        .sql("SELECT author_user_id, body FROM comment WHERE id = :id")
+                        .param("id", change.entityId()).query().singleRow();
+                UUID author = (UUID) stored.get("author_user_id");
+
+                Boolean resolved = optionalBoolean(change, "resolved");
+                String body = op == ChangeOp.UPDATE ? optionalText(change, "body") : null;
+
+                // "Edits the body" means the body actually differs. A client's outbox
+                // coalesces two updates to one entity by replacing the payload, so it
+                // has to send the comment's whole state or an edit followed by a resolve
+                // loses the edit. Treating any present body as an edit would then make
+                // every resolve look like one, and nobody could close a thread they had
+                // not written. It also makes a retried push idempotent.
+                boolean editsBody = body != null && !body.trim().equals(stored.get("body"));
+
+                // Resolving is not editing. Anyone who can write to the project may
+                // resolve a thread — that is what the REST path allows — while editing
+                // and deleting stay with the author. Gating both behind the author check
+                // would mean a thread could be closed on the web and never on a phone.
+                if ((op == ChangeOp.DELETE || editsBody) && author != null && !author.equals(actor)) {
                     conflicts.add(new ConflictRecord(change.entityId(), "comment",
                             ConflictReason.INVALID_REQUEST, null, null,
                             "only the author can change a comment"));
+                    return;
+                }
+
+                if (op == ChangeOp.UPDATE && resolved == null && body == null) {
+                    conflicts.add(new ConflictRecord(change.entityId(), "comment",
+                            ConflictReason.INVALID_REQUEST, null, null, "a comment needs a body"));
+                    return;
+                }
+                if (editsBody && body.isBlank()) {
+                    conflicts.add(new ConflictRecord(change.entityId(), "comment",
+                            ConflictReason.INVALID_REQUEST, null, null, "a comment needs a body"));
                     return;
                 }
 
@@ -459,23 +489,34 @@ public class SyncService {
                             .param("next", next).param("deviceId", deviceId)
                             .param("id", change.entityId()).param("projectId", projectId).update();
                     recordChange(projectId, "comment", change.entityId(), "delete", deviceId);
-                } else {
-                    String body = optionalText(change, "body");
-                    if (body == null || body.isBlank()) {
-                        conflicts.add(new ConflictRecord(change.entityId(), "comment",
-                                ConflictReason.INVALID_REQUEST, null, null, "a comment needs a body"));
-                        return;
-                    }
+                    applied.add(new AppliedChange(change.entityId(), "comment", next));
+                    return;
+                }
+
+                if (resolved != null) {
                     jdbc.sql("""
-                            UPDATE comment SET body = :body, version = :next,
-                                   updated_by_device_id = :deviceId
+                            UPDATE comment
+                               SET resolved_at = CASE WHEN :resolved THEN now() END,
+                                   resolved_by_user_id =
+                                       CASE WHEN :resolved THEN CAST(:userId AS uuid) END
                              WHERE id = :id AND project_id = :projectId
                             """)
-                            .param("body", body.trim()).param("next", next)
-                            .param("deviceId", deviceId).param("id", change.entityId())
-                            .param("projectId", projectId).update();
-                    recordChange(projectId, "comment", change.entityId(), "update", deviceId);
+                            .param("resolved", resolved).param("userId", actor)
+                            .param("id", change.entityId()).param("projectId", projectId).update();
                 }
+                if (editsBody) {
+                    jdbc.sql("UPDATE comment SET body = :body WHERE id = :id AND project_id = :projectId")
+                            .param("body", body.trim())
+                            .param("id", change.entityId()).param("projectId", projectId).update();
+                }
+
+                jdbc.sql("""
+                        UPDATE comment SET version = :next, updated_by_device_id = :deviceId
+                         WHERE id = :id AND project_id = :projectId
+                        """)
+                        .param("next", next).param("deviceId", deviceId)
+                        .param("id", change.entityId()).param("projectId", projectId).update();
+                recordChange(projectId, "comment", change.entityId(), "update", deviceId);
                 applied.add(new AppliedChange(change.entityId(), "comment", next));
             }
         }
@@ -1060,6 +1101,16 @@ public class SyncService {
     private UUID optionalUuid(ChangeRequest change, String field) {
         String value = optionalText(change, field);
         return value == null ? null : UUID.fromString(value);
+    }
+
+    /**
+     * Null when the field is absent, so "resolve this" and "leave it alone" stay
+     * distinguishable. A missing boolean read as false would reopen every thread on
+     * every unrelated comment edit.
+     */
+    private Boolean optionalBoolean(ChangeRequest change, String field) {
+        JsonNode node = change.data() == null ? null : change.data().get(field);
+        return node == null || node.isNull() ? null : node.asBoolean();
     }
 
     private int optionalInt(ChangeRequest change, String field, int fallback) {

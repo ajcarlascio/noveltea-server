@@ -39,6 +39,25 @@ class SyncCommentThreadTest extends AbstractPostgresTest {
         return new ChangeRequest("comment", id, "create", null, data);
     }
 
+    private ChangeRequest resolve(UUID id, boolean resolved) {
+        ObjectNode data = mapper.createObjectNode();
+        data.put("resolved", resolved);
+        return new ChangeRequest("comment", id, "update", null, data);
+    }
+
+    private boolean isResolved(UUID id) {
+        return Boolean.TRUE.equals(jdbc.sql("SELECT resolved_at IS NOT NULL FROM comment WHERE id = :id")
+                .param("id", id).query(Boolean.class).single());
+    }
+
+    /** author_user_id has a foreign key, so somebody else has to actually exist. */
+    private UUID someoneElse() {
+        UUID id = UUID.randomUUID();
+        jdbc.sql("INSERT INTO app_user (id, email) VALUES (:id, :e)")
+                .param("id", id).param("e", id + "@example.com").update();
+        return id;
+    }
+
     private long repliesTo(UUID parentId) {
         return jdbc.sql("SELECT count(*) FROM comment WHERE parent_comment_id = :id")
                 .param("id", parentId).query(Long.class).single();
@@ -113,5 +132,142 @@ class SyncCommentThreadTest extends AbstractPostgresTest {
                 .param("id", replyId).query(String.class).optional())
                 .as("a reply inherits its thread's anchor rather than carrying its own")
                 .isEmpty();
+    }
+
+    // ------------------------------------------------------------- resolving
+
+    @Test
+    @DisplayName("A THREAD RESOLVED OFFLINE STILL CLOSES WHEN THE DEVICE RECONNECTS")
+    void resolveTravelsOverSync() {
+        // The push path once carried only `body` on a comment update, so a thread closed
+        // on a phone with no signal stayed open everywhere else, for ever.
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "is this right?", null, null);
+
+        PushResponse response = sync.push(projectId, deviceA, List.of(resolve(thread, true)));
+
+        assertThat(response.conflicts()).isEmpty();
+        assertThat(isResolved(thread)).isTrue();
+    }
+
+    @Test
+    @DisplayName("reopening travels too")
+    void reopenTravelsOverSync() {
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "is this right?", null, null);
+        comments.setResolved(thread, userId, true, deviceA);
+
+        sync.push(projectId, deviceA, List.of(resolve(thread, false)));
+
+        assertThat(isResolved(thread)).isFalse();
+    }
+
+    @Test
+    @DisplayName("an ordinary body edit does not reopen a resolved thread")
+    void bodyEditLeavesResolutionAlone() {
+        // A missing `resolved` field means "leave it alone". Read as false, every edit
+        // anywhere would quietly reopen threads someone had already dealt with.
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "is this right?", null, null);
+        comments.setResolved(thread, userId, true, deviceA);
+
+        ObjectNode data = mapper.createObjectNode();
+        data.put("body", "is this right, really?");
+        sync.push(projectId, deviceA, List.of(new ChangeRequest("comment", thread, "update", null, data)));
+
+        assertThat(isResolved(thread)).isTrue();
+        assertThat(jdbc.sql("SELECT body FROM comment WHERE id = :id")
+                .param("id", thread).query(String.class).single())
+                .isEqualTo("is this right, really?");
+    }
+
+    @Test
+    @DisplayName("an update carrying neither body nor resolved does not reopen anything")
+    void anEmptyUpdateIsNotAReopen() {
+        // "resolved" absent means leave it alone. Were it read as false, an update that
+        // named neither field — a client sending an anchor change, or a payload this
+        // version does not know about — would quietly reopen a thread somebody closed.
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "a note", null, null);
+        comments.setResolved(thread, userId, true, deviceA);
+
+        PushResponse response = sync.push(projectId, deviceA,
+                List.of(new ChangeRequest("comment", thread, "update", null, mapper.createObjectNode())));
+
+        assertThat(isResolved(thread)).isTrue();
+        assertThat(response.conflicts())
+                .as("an update that changes nothing it understands is refused, not guessed at")
+                .hasSize(1);
+    }
+
+    @Test
+    @DisplayName("anyone who can write to the project may resolve, not only the author")
+    void resolvingIsNotEditing() {
+        // Editing and deleting stay with the author; resolving is agreeing that a note
+        // has been dealt with, which is the collaborator's half of the conversation.
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "a note", null, null);
+        jdbc.sql("UPDATE comment SET author_user_id = :other WHERE id = :id")
+                .param("other", someoneElse()).param("id", thread).update();
+
+        PushResponse response = sync.push(projectId, deviceA, List.of(resolve(thread, true)));
+
+        assertThat(response.conflicts()).isEmpty();
+        assertThat(isResolved(thread)).isTrue();
+    }
+
+    @Test
+    @DisplayName("A FULL-STATE PAYLOAD CAN RESOLVE A COMMENT SOMEBODY ELSE WROTE")
+    void fullStatePayloadResolvesWithoutLookingLikeAnEdit() {
+        // The client's outbox coalesces two updates to one entity by replacing the
+        // payload, so it sends the comment's whole state — body included — or an edit
+        // followed by a resolve loses the edit. An unchanged body must therefore not
+        // count as editing, or nobody could ever close a thread they had not written.
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "a note", null, null);
+        jdbc.sql("UPDATE comment SET author_user_id = :other WHERE id = :id")
+                .param("other", someoneElse()).param("id", thread).update();
+
+        ObjectNode data = mapper.createObjectNode();
+        data.put("body", "a note").put("resolved", true);
+        PushResponse response = sync.push(projectId, deviceA,
+                List.of(new ChangeRequest("comment", thread, "update", null, data)));
+
+        assertThat(response.conflicts()).isEmpty();
+        assertThat(isResolved(thread)).isTrue();
+    }
+
+    @Test
+    @DisplayName("one payload carrying both an edit and a resolve applies both")
+    void bodyAndResolutionTravelTogether() {
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "a note", null, null);
+
+        ObjectNode data = mapper.createObjectNode();
+        data.put("body", "a better note").put("resolved", true);
+        sync.push(projectId, deviceA,
+                List.of(new ChangeRequest("comment", thread, "update", null, data)));
+
+        assertThat(isResolved(thread)).isTrue();
+        assertThat(jdbc.sql("SELECT body FROM comment WHERE id = :id")
+                .param("id", thread).query(String.class).single()).isEqualTo("a better note");
+    }
+
+    @Test
+    @DisplayName("editing someone else's comment is still refused")
+    void editingIsStillTheAuthorsAlone() {
+        UUID docId = seedDocument("Chapter One", "V", "prose");
+        UUID thread = comments.create(docId, userId, deviceA, "a note", null, null);
+        jdbc.sql("UPDATE comment SET author_user_id = :other WHERE id = :id")
+                .param("other", someoneElse()).param("id", thread).update();
+
+        ObjectNode data = mapper.createObjectNode();
+        data.put("body", "putting words in their mouth");
+        PushResponse response = sync.push(projectId, deviceA,
+                List.of(new ChangeRequest("comment", thread, "update", null, data)));
+
+        assertThat(response.conflicts()).hasSize(1);
+        assertThat(jdbc.sql("SELECT body FROM comment WHERE id = :id")
+                .param("id", thread).query(String.class).single()).isEqualTo("a note");
     }
 }
