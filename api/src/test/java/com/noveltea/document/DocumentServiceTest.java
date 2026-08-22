@@ -9,6 +9,7 @@ import com.noveltea.support.AbstractPostgresTest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -230,11 +231,18 @@ class DocumentServiceTest extends AbstractPostgresTest {
         writeDocument("Normal", "a2", "short");
 
         DocumentPage first = documents.bodies(projectId, null, 100);
+        DocumentPage second = documents.bodies(projectId, first.nextCursor(), 100);
 
-        assertThat(titlesOf(first)).containsExactly("Enormous");
+        // Which of the two comes first is decided by their random uuids, because that
+        // is what the cursor orders by. Asserting a particular order made this a coin
+        // flip; what actually matters is that the budget splits them and neither is
+        // lost, whichever way they land.
+        assertThat(titlesOf(first)).hasSize(1);
         assertThat(first.hasMore()).isTrue();
-        assertThat(titlesOf(documents.bodies(projectId, first.nextCursor(), 100)))
-                .containsExactly("Normal");
+        assertThat(titlesOf(second)).hasSize(1);
+        assertThat(second.hasMore()).isFalse();
+        assertThat(Stream.concat(titlesOf(first).stream(), titlesOf(second).stream()).toList())
+                .containsExactlyInAnyOrder("Enormous", "Normal");
     }
 
     @Test
