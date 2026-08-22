@@ -442,7 +442,15 @@ public class SyncService {
                 }
                 UUID author = jdbc.sql("SELECT author_user_id FROM comment WHERE id = :id")
                         .param("id", change.entityId()).query(UUID.class).optional().orElse(null);
-                if (author != null && !author.equals(actor)) {
+
+                // Resolving is not editing. Anyone who can write to the project may
+                // resolve a thread — that is what the REST path allows — while editing
+                // and deleting stay with the author. Gating both behind the author check
+                // would mean a thread could be closed on the web and never on a phone.
+                Boolean resolved = optionalBoolean(change, "resolved");
+                boolean editsBody = op == ChangeOp.UPDATE && optionalText(change, "body") != null;
+
+                if ((op == ChangeOp.DELETE || editsBody) && author != null && !author.equals(actor)) {
                     conflicts.add(new ConflictRecord(change.entityId(), "comment",
                             ConflictReason.INVALID_REQUEST, null, null,
                             "only the author can change a comment"));
@@ -450,6 +458,23 @@ public class SyncService {
                 }
 
                 long next = current.get() + 1;
+                if (op == ChangeOp.UPDATE && resolved != null && !editsBody) {
+                    jdbc.sql("""
+                            UPDATE comment
+                               SET resolved_at = CASE WHEN :resolved THEN now() END,
+                                   resolved_by_user_id =
+                                       CASE WHEN :resolved THEN CAST(:userId AS uuid) END,
+                                   version = :next, updated_by_device_id = :deviceId
+                             WHERE id = :id AND project_id = :projectId
+                            """)
+                            .param("resolved", resolved).param("userId", actor)
+                            .param("next", next).param("deviceId", deviceId)
+                            .param("id", change.entityId()).param("projectId", projectId).update();
+                    recordChange(projectId, "comment", change.entityId(), "update", deviceId);
+                    applied.add(new AppliedChange(change.entityId(), "comment", next));
+                    return;
+                }
+
                 if (op == ChangeOp.DELETE) {
                     jdbc.sql("""
                             UPDATE comment SET deleted_at = now(), version = :next,
@@ -1060,6 +1085,16 @@ public class SyncService {
     private UUID optionalUuid(ChangeRequest change, String field) {
         String value = optionalText(change, field);
         return value == null ? null : UUID.fromString(value);
+    }
+
+    /**
+     * Null when the field is absent, so "resolve this" and "leave it alone" stay
+     * distinguishable. A missing boolean read as false would reopen every thread on
+     * every unrelated comment edit.
+     */
+    private Boolean optionalBoolean(ChangeRequest change, String field) {
+        JsonNode node = change.data() == null ? null : change.data().get(field);
+        return node == null || node.isNull() ? null : node.asBoolean();
     }
 
     private int optionalInt(ChangeRequest change, String field, int fallback) {
