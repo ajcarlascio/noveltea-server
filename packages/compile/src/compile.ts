@@ -29,7 +29,10 @@ export function compile(
     throw new Error(`${format} is not available in this edition`);
   }
 
-  const plan = planCompile(items, { includeFolderHeadings: options.includeFolderHeadings });
+  // Normalised rather than forwarded: the option is optional on both sides, and passing
+  // an explicit `undefined` is not the same as omitting it once a consumer turns on
+  // exactOptionalPropertyTypes.
+  const plan = planCompile(items, { includeFolderHeadings: options.includeFolderHeadings ?? false });
   const warnings: CompileWarning[] = [...plan.warnings];
   const separator = options.separator ?? "\n\n";
   const parts: string[] = [];

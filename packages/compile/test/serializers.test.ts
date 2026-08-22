@@ -96,6 +96,32 @@ describe("markdown", () => {
     assert.equal(toMarkdown(doc(para(text("- not a list")))).output, "\\- not a list");
   });
 
+  test("NUMBERS AN ORDERED LIST INSTEAD OF BULLETING IT", () => {
+    // listItem rendered "- " whatever its parent was, so an author's numbered list came
+    // out of the compiler unnumbered. The position was already being passed down and
+    // simply never read.
+    const item = (body: string) => ({ type: "listItem", content: [para(text(body))] });
+    const { output } = toMarkdown(doc({
+      type: "orderedList",
+      content: [item("first"), item("second"), item("third")],
+    }));
+
+    assert.match(output, /^1\. first$/m);
+    assert.match(output, /^2\. second$/m);
+    assert.match(output, /^3\. third$/m);
+  });
+
+  test("still bullets an unordered list", () => {
+    const item = (body: string) => ({ type: "listItem", content: [para(text(body))] });
+    const { output } = toMarkdown(doc({
+      type: "bulletList",
+      content: [item("one"), item("two")],
+    }));
+
+    assert.match(output, /^- one$/m);
+    assert.match(output, /^- two$/m);
+  });
+
   test("emphasis marks produce markdown syntax", () => {
     const { output } = toMarkdown(doc(para(
       text("she was "), text("certain", [{ type: "em" }]), text(" of it"),
