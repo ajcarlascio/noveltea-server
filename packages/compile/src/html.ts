@@ -10,7 +10,10 @@ const ESCAPES: Record<string, string> = {
 
 /** Escapes text and attribute values. Author text can contain anything. */
 export function escapeHtml(value: string): string {
-  return value.replace(/[&<>"]/g, (character) => ESCAPES[character]);
+  // The fallback is unreachable — the class and the table hold the same four characters
+  // — but it keeps the return a string rather than `string | undefined`, and it fails
+  // towards emitting the character unchanged rather than the word "undefined".
+  return value.replace(/[&<>"]/g, (character) => ESCAPES[character] ?? character);
 }
 
 /**
@@ -42,7 +45,9 @@ export function isSafeHref(href: string): boolean {
   }
   const scheme = normalised.match(/^([a-z][a-z0-9+.-]*:)/);
   if (!scheme) return true; // no scheme at all: a relative reference
-  return SAFE_SCHEMES.includes(scheme[1]);
+  // A matched group is typed optional. It cannot be missing here, and an unsafe link is
+  // the right way to be wrong if it ever were: this allowlist fails closed.
+  return scheme[1] !== undefined && SAFE_SCHEMES.includes(scheme[1]);
 }
 
 const MARK_TAGS: Record<string, string> = {
