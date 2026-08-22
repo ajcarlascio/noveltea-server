@@ -1,4 +1,4 @@
-import { toHtml, escapeHtml } from "./html.ts";
+import { toHtml, toPagedDocument, escapeHtml } from "./html.ts";
 import { toMarkdown } from "./markdown.ts";
 import { planCompile } from "./plan.ts";
 import { toPlainText } from "./text.ts";
@@ -56,12 +56,24 @@ export function compile(
       options.includeDocumentTitles === true
         ? heading(format, item.title, headingLevel) + body.output
         : body.output;
-    parts.push(section);
+    // Wrapped so the stylesheet has something to break between. Without a per-document
+    // element there is no selector for "start this one on a new page".
+    parts.push(
+      format === "html" && options.page !== undefined
+        ? `<section class="chapter">\n${section}\n</section>`
+        : section,
+    );
   }
 
+  const body = parts.join(separator).trim();
   return {
     format,
-    output: parts.join(separator).trim() + (format === "html" ? "" : "\n"),
+    output:
+      format === "html"
+        ? options.page === undefined
+          ? body
+          : toPagedDocument(body, options.title ?? "Manuscript", options.page)
+        : body + "\n",
     warnings,
     wordCount: plan.wordCount,
   };

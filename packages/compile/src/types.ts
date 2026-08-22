@@ -72,6 +72,45 @@ export interface CompileOptions {
   includeDocumentTitles?: boolean;
   /** Inserted between documents. Defaults to a blank line. */
   separator?: string;
+  /**
+   * Page setup for `html`. Omitted, the output is a fragment as before.
+   *
+   * Supplying it wraps the prose in a complete document whose stylesheet paginates it,
+   * which is the only way page numbers can exist at all: the numbers come from the
+   * renderer laying out the real text in the real font at the real size, not from
+   * anything countable here.
+   */
+  page?: PageSetup;
+  /** The document's title. Only used for a paginated export's <title>. */
+  title?: string;
+}
+
+/**
+ * How a paginated export is laid out.
+ *
+ * The defaults are standard manuscript format — 12pt serif, double-spaced, one-inch
+ * margins — because that is what a submission is expected to look like, and it is not
+ * the same thing as what an author likes on screen. Someone drafting in 19px Atkinson
+ * still submits in 12pt double-spaced, and quietly exporting their screen settings
+ * would produce a manuscript an agent bounces.
+ */
+export interface PageSetup {
+  /** Any CSS `@page size` value: `letter`, `A4`, `5.5in 8.5in`. */
+  size?: string;
+  /** Any CSS length. */
+  margin?: string;
+  /** A CSS font stack. */
+  fontFamily?: string;
+  /** Points, as manuscripts are specified. */
+  fontSizePt?: number;
+  /** Unitless line height. 2 is double-spaced. */
+  lineHeight?: number;
+  /** Page numbers in the bottom margin. */
+  pageNumbers?: boolean;
+  /** Printed beside the page number, as a running head. */
+  runningHead?: string;
+  /** Start each document on a fresh page. */
+  breakBetweenDocuments?: boolean;
 }
 
 export type CoreFormat = "txt" | "md" | "html";

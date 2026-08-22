@@ -1,5 +1,5 @@
 import { canonicalMark, inspect } from "./text.ts";
-import type { CompileWarning, ProseMirrorNode } from "./types.ts";
+import type { CompileWarning, PageSetup, ProseMirrorNode } from "./types.ts";
 
 const ESCAPES: Record<string, string> = {
   "&": "&amp;",
@@ -140,4 +140,85 @@ export function toHtml(doc: ProseMirrorNode | null | undefined): {
     });
   }
   return { output, warnings };
+}
+
+/**
+ * Wraps rendered prose in a complete document that paginates when printed.
+ *
+ * <p>Page numbers cannot be counted here. A page exists only once something lays the
+ * text out — the same manuscript is a different number of pages in a different font, at
+ * a different size, on a different paper. So the numbering is expressed as CSS and the
+ * renderer resolves it against the actual type, which is what makes it correct rather
+ * than an estimate.
+ *
+ * <p>`@page` margin boxes are the mechanism. Chrome 131 and Safari 18.2 both ship them,
+ * so "print to PDF" from a current browser produces numbered pages with no extra tool.
+ * Older renderers ignore the margin boxes and still get the size, margins and page
+ * breaks — the output degrades to unnumbered pages rather than to nothing.
+ */
+export function toPagedDocument(
+  bodyHtml: string,
+  title: string,
+  setup: PageSetup = {},
+): string {
+  const {
+    size = "letter",
+    margin = "1in",
+    fontFamily = '"Times New Roman", Times, Georgia, serif',
+    fontSizePt = 12,
+    lineHeight = 2,
+    pageNumbers = true,
+    runningHead,
+    breakBetweenDocuments = true,
+  } = setup;
+
+  const head = runningHead === undefined ? "" : `${escapeHtml(runningHead)} `;
+  const marginBox = pageNumbers
+    ? `
+    @bottom-right {
+      content: "${head}" counter(page);
+      font-family: ${fontFamily};
+      font-size: ${String(fontSizePt)}pt;
+    }`
+    : "";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${escapeHtml(title)}</title>
+<style>
+@page {
+  size: ${size};
+  margin: ${margin};${marginBox}
+}
+body {
+  font-family: ${fontFamily};
+  font-size: ${String(fontSizePt)}pt;
+  line-height: ${String(lineHeight)};
+  /* Manuscripts are ragged-right: justification changes word spacing line by line,
+     which is exactly the kind of variation a copy-editor should not have to read past. */
+  text-align: left;
+  margin: 0;
+}
+p { margin: 0; text-indent: 0.5in; }
+/* The first paragraph after a break is flush left, as in a printed book. */
+h1 + p, h2 + p, h3 + p, blockquote + p { text-indent: 0; }
+h1, h2, h3 { font-weight: normal; page-break-after: avoid; break-after: avoid; }
+h1 { font-size: ${String(fontSizePt)}pt; text-align: center; margin: 0 0 ${String(lineHeight)}em; }
+blockquote { margin: 0 0 0 0.5in; }
+/* Never leave one line of a paragraph alone on a page. */
+p, blockquote, li { orphans: 2; widows: 2; }${
+    breakBetweenDocuments
+      ? `
+.chapter + .chapter { break-before: page; page-break-before: always; }`
+      : ""
+  }
+</style>
+</head>
+<body>
+${bodyHtml}
+</body>
+</html>
+`;
 }
