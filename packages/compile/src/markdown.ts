@@ -58,9 +58,12 @@ export function toMarkdown(doc: ProseMirrorNode | null | undefined): {
     if (node.type === "hardBreak" || node.type === "hard_break") return "  \n";
     if (node.type === "horizontalRule" || node.type === "horizontal_rule") return "\n---\n\n";
 
+    // A list item's marker is decided by its parent, so the position is passed down.
+    // Zero means "not in an ordered list" and renders a bullet.
+    const numbered = node.type === "orderedList" || node.type === "ordered_list";
     const children = (node.content ?? [])
-      .map((child, index) => render(child, depth + 1, index + 1))
-      .join(node.type === "bulletList" || node.type === "orderedList" ? "" : "");
+      .map((child, index) => render(child, depth + 1, numbered ? index + 1 : 0))
+      .join("");
 
     switch (node.type) {
       case "doc":
@@ -78,7 +81,7 @@ export function toMarkdown(doc: ProseMirrorNode | null | undefined): {
         return `\`\`\`\n${plain(node)}\n\`\`\`\n\n`;
       case "listItem":
       case "list_item":
-        return `- ${children.trim()}\n`;
+        return ordinal > 0 ? `${String(ordinal)}. ${children.trim()}\n` : `- ${children.trim()}\n`;
       case "bulletList":
       case "bullet_list":
       case "orderedList":

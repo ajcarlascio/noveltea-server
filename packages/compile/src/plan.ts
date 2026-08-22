@@ -104,7 +104,11 @@ export function planCompile(
       type: item.type,
       depth,
       hasText: true,
-      content: item.content,
+      // Normalised rather than passed through: CompileInput.content is optional, so
+      // this could hand back `undefined` for a field typed `ProseMirrorNode | null`.
+      // Harmless until a consumer turns on exactOptionalPropertyTypes, at which point
+      // it is a type that does not describe the value.
+      content: item.content ?? null,
     });
   }
 
