@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fromNodeSqlite } from "../src/adapters/node-sqlite.ts";
 import { runMigrations, appliedVersions, targetVersion } from "../src/migrate.ts";
 import { MIGRATIONS } from "../src/generated/migrations.ts";
+import { ENTITY_TYPES } from "../src/types.ts";
 
 const NOW = "2026-08-18T18:00:00Z";
 
@@ -125,6 +126,23 @@ describe("constraints", () => {
                      VALUES ('b1', 'not-a-number', '${NOW}', '${NOW}');`),
       /cannot store TEXT value in INTEGER column/i,
     );
+  });
+
+  test("entity types match the pending_change constraint", () => {
+    // The TypeScript union and the CHECK are two statements of one rule, and only the
+    // CHECK is enforced at runtime. Snapshot and comment were once in the schema and
+    // in neither the union nor the constraint, so a comment written offline could be
+    // received from another device but never sent.
+    const db = freshDb();
+    const sql = db.query<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'pending_change';",
+    )[0]!.sql;
+
+    const clause = /entity_type\s+TEXT\s+NOT NULL\s+CHECK\s*\(entity_type IN \(([^)]*)\)\)/i.exec(sql);
+    assert.ok(clause, "pending_change has no entity_type CHECK to compare against");
+
+    const inSchema = [...clause[1].matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
+    assert.deepEqual([...ENTITY_TYPES].sort(), inSchema);
   });
 
   test("pending_change coalesces to one row per entity", () => {
