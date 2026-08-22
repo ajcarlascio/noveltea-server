@@ -164,6 +164,25 @@ class CommentServiceTest extends AbstractPostgresTest {
     }
 
     @Test
+    @DisplayName("a quotation spanning a paragraph break is not orphaned")
+    void anchorSurvivesABlockBoundary() {
+        // The quotation comes from an editor selection, which separates blocks with a
+        // blank line; search_text is the same prose one block per line. Compared
+        // literally, every comment quoting across a paragraph break orphans itself the
+        // instant it is written, with the passage still sitting there untouched.
+        // search_text is set directly: documentWithText interpolates its argument into
+        // the content JSON unescaped, so a literal newline there breaks the insert.
+        UUID docId = documentWithText("placeholder");
+        jdbc.sql("UPDATE document SET search_text = :t WHERE id = :id")
+                .param("t", "the lighthouse keeper waited\nmorning came slowly")
+                .param("id", docId).update();
+        comments.create(docId, userId, deviceA, "the turn here", anchor("waited\n\nmorning came"), null);
+
+        assertThat(comments.forDocument(docId)).singleElement()
+                .satisfies(c -> assertThat(c.orphaned()).isFalse());
+    }
+
+    @Test
     @DisplayName("a comment with no anchor is never orphaned")
     void unanchoredCommentsAreNeverOrphaned() {
         UUID docId = documentWithText("prose");

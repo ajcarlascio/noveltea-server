@@ -207,16 +207,30 @@ public class CommentService {
      * <p>Checked against the document's flattened text rather than its offsets, because
      * offsets drift with every edit while the words usually survive. A comment with no
      * anchor is never orphaned — it was never pointing anywhere in particular.
+     *
+     * <p>Whitespace is collapsed on both sides before comparing. The quotation comes
+     * from an editor selection, which separates blocks with a blank line, while
+     * {@code search_text} is the same prose flattened one block per line. Comparing
+     * them literally means any comment quoting across a paragraph break is orphaned the
+     * instant it is written, with the passage still sitting there untouched.
+     *
+     * <p>The client applies the same rule in {@code data/comments.ts}. It has to: an
+     * author moving between devices must not see a comment called orphaned in one place
+     * and live in the other.
      */
     private boolean isOrphaned(JsonNode anchor, String searchText) {
         if (anchor == null || anchor.isNull() || !anchor.hasNonNull("quotedText")) {
             return false;
         }
-        String quoted = anchor.get("quotedText").asText().trim();
+        String quoted = collapseWhitespace(anchor.get("quotedText").asText());
         if (quoted.isEmpty()) {
             return false;
         }
-        return searchText == null || !searchText.contains(quoted);
+        return searchText == null || !collapseWhitespace(searchText).contains(quoted);
+    }
+
+    private static String collapseWhitespace(String value) {
+        return value.replaceAll("\\s+", " ").trim();
     }
 
     private UUID requireAuthor(UUID commentId) {
