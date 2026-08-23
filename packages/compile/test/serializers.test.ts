@@ -1,6 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { parse } from "node-html-parser";
+import { compile } from "../src/compile.ts";
 import { toHtml } from "../src/html.ts";
 import { toMarkdown } from "../src/markdown.ts";
 import { toPlainText, countWords } from "../src/text.ts";
@@ -225,5 +226,71 @@ describe("mark naming conventions", () => {
       text("see", [{ type: "link", attrs: { href: "https://example.com" } }]),
     )));
     assert.match(result.output, /<a href="https:\/\/example\.com">see<\/a>/);
+  });
+});
+
+describe("paginated html", () => {
+  const chapter = (title: string, body: string) => ({
+    id: title,
+    title,
+    type: "document",
+    orderKey: title,
+    content: doc(para(text(body))),
+  });
+
+  test("PAGE NUMBERS ARE EXPRESSED AS CSS, NOT COUNTED HERE", () => {
+    // A page exists only once something lays the text out: the same manuscript is a
+    // different number of pages in a different font, at a different size, on different
+    // paper. Emitting a number here would be inventing one.
+    const { output } = compile([chapter("One", "prose")], "html", { page: {} });
+    const root = parse(output);
+    const style = root.querySelector("style")?.text ?? "";
+
+    assert.match(style, /@page\s*\{/);
+    assert.match(style, /@bottom-right\s*\{/);
+    assert.match(style, /content:\s*"" counter\(page\)/);
+  });
+
+  test("carries the running head into the margin box when there is one", () => {
+    const { output } = compile([chapter("One", "prose")], "html", {
+      page: { runningHead: "Carlascio / Lighthouse" },
+    });
+    assert.match(parse(output).querySelector("style")?.text ?? "", /Carlascio \/ Lighthouse/);
+  });
+
+  test("defaults to standard manuscript format, not to screen settings", () => {
+    // Someone drafting in 19px Atkinson still submits in 12pt double-spaced. Exporting
+    // their screen preferences would produce a manuscript an agent bounces.
+    const style = parse(compile([chapter("One", "p")], "html", { page: {} }).output)
+      .querySelector("style")?.text ?? "";
+    assert.match(style, /font-size:\s*12pt/);
+    assert.match(style, /line-height:\s*2/);
+    assert.match(style, /margin:\s*1in/);
+  });
+
+  test("breaks between documents so a chapter starts a page", () => {
+    const { output } = compile([chapter("One", "first"), chapter("Two", "second")], "html", {
+      page: {},
+    });
+    const root = parse(output);
+    assert.equal(root.querySelectorAll("section.chapter").length, 2);
+    assert.match(root.querySelector("style")?.text ?? "", /break-before:\s*page/);
+  });
+
+  test("stays a bare fragment when no page setup is asked for", () => {
+    // Embedding a whole document where a fragment was expected would break every
+    // existing caller.
+    const { output } = compile([chapter("One", "prose")], "html", {});
+    assert.doesNotMatch(output, /<!doctype/i);
+    assert.doesNotMatch(output, /<style/i);
+  });
+
+  test("escapes the title and running head like any other author text", () => {
+    const { output } = compile([chapter("One", "p")], "html", {
+      page: { runningHead: '"><script>alert(1)</script>' },
+      title: '"><script>alert(2)</script>',
+    });
+    assert.doesNotMatch(output, /<script>alert\(1\)/);
+    assert.doesNotMatch(output, /<script>alert\(2\)/);
   });
 });
