@@ -681,10 +681,19 @@ public class SyncService {
         Optional<Long> current = jdbc
                 // document has no project_id; it is scoped through its binder_item. Without
                 // this, knowing an id is enough to overwrite another author's chapter.
+                //
+                // deleted_at IS NULL is load-bearing: a push that arrives after the item was
+                // deleted must not be accepted into a tombstoned row. softDeleteItem bumps
+                // binder_item.version but never document.version, so a stale update whose
+                // base still matches would otherwise be applied silently into a row that
+                // retention is about to hard-delete — destroying the author's newest words
+                // with no conflict and no copy. Treating the item as missing routes the
+                // write to createOrphanCopy, which keeps the text live at project root.
                 .sql("""
                         SELECT d.version FROM document d
                           JOIN binder_item b ON b.id = d.id
                          WHERE d.id = :id AND b.project_id = :projectId
+                           AND b.deleted_at IS NULL
                          FOR UPDATE OF d
                         """)
                 .param("id", change.entityId())
@@ -706,9 +715,11 @@ public class SyncService {
 
         if (current.isEmpty()) {
             if ("create".equals(change.op())) {
-                // The binder_item must already exist (pushed in the same batch or earlier).
+                // The binder_item must already exist (pushed in the same batch or earlier)
+                // and be live: inserting a document body for a tombstoned item would hand
+                // retention something to destroy.
                 Optional<String> title = jdbc
-                        .sql("SELECT title FROM binder_item WHERE id = :id AND project_id = :projectId")
+                        .sql("SELECT title FROM binder_item WHERE id = :id AND project_id = :projectId AND deleted_at IS NULL")
                         .param("id", change.entityId())
                         .param("projectId", projectId)
                         .query(String.class)
@@ -811,7 +822,20 @@ public class SyncService {
         }
 
         if (current.isEmpty()) {
-            if (!"create".equals(change.op())) {
+            // An update for a row the server has never seen is treated as a create when
+            // the payload carries the fields a create needs. This is the recovery path
+            // for a client whose create push lost an order_key race and was rejected
+            // INVALID_REQUEST: the client cleared that pending row, then a pull-side
+            // displacement re-queued the item. Without upsert semantics that re-queue
+            // comes back ENTITY_MISSING, the client clears it too, and the item exists
+            // only on one device until a resync erases it. A create with the fresh key
+            // is accepted and the item survives.
+            boolean canCreate = "create".equals(change.op())
+                    || ("update".equals(change.op())
+                            && optionalText(change, "type") != null
+                            && optionalText(change, "title") != null
+                            && optionalText(change, "order_key") != null);
+            if (!canCreate) {
                 conflicts.add(new ConflictRecord(
                         change.entityId(), "binder_item", ConflictReason.ENTITY_MISSING, null, null));
                 return;
@@ -885,23 +909,58 @@ public class SyncService {
     private UUID createConflictCopy(UUID projectId, UUID deviceId, UUID originalId, String content, Long baseVersion) {
         Map<String, Object> original = jdbc
                 .sql("""
-                        SELECT project_id, parent_id, title, order_key FROM binder_item
+                        SELECT parent_id, title, order_key, deleted_at FROM binder_item
                          WHERE id = :id AND project_id = :projectId
                         """)
                 .param("id", originalId)
                 .param("projectId", projectId)
                 .query()
-                .singleRow();
+                .listOfRows()
+                .stream()
+                .findFirst()
+                .orElse(null);
 
-        UUID parentId = (UUID) original.get("parent_id");
-        String orderKey = (String) original.get("order_key");
-        String title = (String) original.get("title");
+        UUID parentId;
+        String afterKey;
+        String title;
+
+        if (original == null
+                || original.get("deleted_at") != null
+                || isTrashNode(projectId, (UUID) original.get("parent_id"))) {
+            // The original is gone, tombstoned, or sitting in the trash node (trashing is
+            // a move, not a delete — the item stays live there until "empty trash"). A
+            // copy placed beside it would be tombstoned by that emptying and destroyed by
+            // retention, taking the rescued words with it. Park the copy live at project
+            // root instead; the author still finds it in Conflicts.
+            parentId = null;
+            afterKey = null;
+            title = original == null
+                    ? "Recovered document " + originalId.toString().substring(0, 8)
+                    : (String) original.get("title");
+        } else {
+            parentId = (UUID) original.get("parent_id");
+            afterKey = (String) original.get("order_key");
+            title = (String) original.get("title");
+        }
 
         UUID copyId = UUID.randomUUID();
         insertCopy(projectId, parentId, copyId, conflictTitle(title, deviceId),
-                nextKeyAfter(projectId, parentId, orderKey), deviceId, originalId, baseVersion);
+                nextKeyAfter(projectId, parentId, afterKey), deviceId, originalId, baseVersion);
         insertDocumentRaw(projectId, deviceId, copyId, content);
         return copyId;
+    }
+
+    private boolean isTrashNode(UUID projectId, UUID parentId) {
+        if (parentId == null) {
+            return false;
+        }
+        return Boolean.TRUE.equals(jdbc.sql("""
+                SELECT EXISTS (SELECT 1 FROM binder_item
+                                WHERE id = :id AND project_id = :projectId AND type = 'trash')
+                """)
+                .param("id", parentId)
+                .param("projectId", projectId)
+                .query(Boolean.class).single());
     }
 
     /** Preserves content whose original binder_item no longer exists, at project root. */
