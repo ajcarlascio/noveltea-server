@@ -840,6 +840,10 @@ public class SyncService {
                         change.entityId(), "binder_item", ConflictReason.ENTITY_MISSING, null, null));
                 return;
             }
+            UUID requestedParent = optionalUuid(change, "parent_id");
+            if (requestedParent != null) {
+                binder.requireReparentIsSafe(projectId, change.entityId(), requestedParent);
+            }
             jdbc.sql("""
                     INSERT INTO binder_item
                         (id, project_id, parent_id, type, title, order_key, version, updated_by_device_id)

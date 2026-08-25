@@ -293,4 +293,23 @@ describe("paginated html", () => {
     assert.doesNotMatch(output, /<script>alert\(1\)/);
     assert.doesNotMatch(output, /<script>alert\(2\)/);
   });
+
+  test("rejects page options that can break out of the stylesheet", () => {
+    assert.throws(
+      () => compile([chapter("One", "p")], "html", { page: { fontFamily: "serif; color: red" } }),
+      /fontFamily contains characters/,
+    );
+    assert.throws(
+      () => compile([chapter("One", "p")], "html", { page: { margin: "1in</style>" } }),
+      /margin contains characters/,
+    );
+  });
+
+  test("CSS-escapes quotes and newlines in a running head", () => {
+    const { output } = compile([chapter("One", "p")], "html", {
+      page: { runningHead: 'A "quoted"\nhead' },
+    });
+    assert.match(parse(output).querySelector("style")?.text ?? "", /A \\22 quoted\\22 \\A head/);
+    assert.doesNotMatch(output, /<script|<\/style>/i);
+  });
 });

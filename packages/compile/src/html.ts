@@ -50,6 +50,21 @@ export function isSafeHref(href: string): boolean {
   return scheme[1] !== undefined && SAFE_SCHEMES.includes(scheme[1]);
 }
 
+function cssValue(value: string, name: string): string {
+  if (/[\r\n<>;{}]/.test(value)) {
+    throw new Error(`${name} contains characters that are not valid in paginated HTML`);
+  }
+  return value;
+}
+
+function escapeCssString(value: string): string {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, "\\22 ")
+    .replace(/\r/g, "\\D ")
+    .replace(/\n/g, "\\A ");
+}
+
 const MARK_TAGS: Record<string, string> = {
   strong: "strong",
   em: "em",
@@ -172,12 +187,15 @@ export function toPagedDocument(
     breakBetweenDocuments = true,
   } = setup;
 
-  const head = runningHead === undefined ? "" : `${escapeHtml(runningHead)} `;
+  const safeSize = cssValue(size, "size");
+  const safeMargin = cssValue(margin, "margin");
+  const safeFontFamily = cssValue(fontFamily, "fontFamily");
+  const head = runningHead === undefined ? "" : `${escapeCssString(runningHead)} `;
   const marginBox = pageNumbers
     ? `
     @bottom-right {
       content: "${head}" counter(page);
-      font-family: ${fontFamily};
+      font-family: ${safeFontFamily};
       font-size: ${String(fontSizePt)}pt;
     }`
     : "";
@@ -189,11 +207,11 @@ export function toPagedDocument(
 <title>${escapeHtml(title)}</title>
 <style>
 @page {
-  size: ${size};
-  margin: ${margin};${marginBox}
+  size: ${safeSize};
+  margin: ${safeMargin};${marginBox}
 }
 body {
-  font-family: ${fontFamily};
+  font-family: ${safeFontFamily};
   font-size: ${String(fontSizePt)}pt;
   line-height: ${String(lineHeight)};
   /* Manuscripts are ragged-right: justification changes word spacing line by line,
