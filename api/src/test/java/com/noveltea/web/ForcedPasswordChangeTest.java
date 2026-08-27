@@ -165,6 +165,29 @@ class ForcedPasswordChangeTest extends AbstractPostgresTest {
     }
 
     @Test
+    @DisplayName("a held account can still refresh, and the replacement token is still held")
+    void refreshingKeepsTheLock() throws Exception {
+        Session session = locked();
+
+        // The client reaches the change screen with a session restored from storage, which
+        // holds no access token — so the first request it makes is a refresh. If that were
+        // blocked, or if it minted an unrestricted token, the one route this account may
+        // use would be unreachable or the lock would be trivially escapable.
+        Session rotated = auth.refresh(session.refreshToken());
+
+        assertThat(rotated.mustChangePassword()).isTrue();
+        assertThat(mvc.perform(get("/api/v1/projects")
+                        .header("Authorization", "Bearer " + rotated.accessToken()))
+                        .andReturn().getResponse().getStatus())
+                .isEqualTo(403);
+        assertThat(mvc.perform(post("/api/v1/account/password")
+                        .header("Authorization", "Bearer " + rotated.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content(change(SEEDED, CHOSEN)))
+                        .andReturn().getResponse().getStatus())
+                .isEqualTo(200);
+    }
+
+    @Test
     @DisplayName("an ordinary account is untouched by any of this")
     void anOrdinaryAccountIsNotAffected() throws Exception {
         Session ordinary = auth.register(
