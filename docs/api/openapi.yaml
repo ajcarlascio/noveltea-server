@@ -1456,6 +1456,8 @@ components:
           format: int64
         mustChangePassword:
           type: boolean
+        isAdmin:
+          type: boolean
     RefreshRequest:
       type: object
       properties:
@@ -1532,6 +1534,8 @@ components:
           type: integer
           format: int64
         mustChangePassword:
+          type: boolean
+        isAdmin:
           type: boolean
         devicesSignedOut:
           type: integer

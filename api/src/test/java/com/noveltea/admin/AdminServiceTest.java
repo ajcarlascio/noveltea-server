@@ -147,6 +147,37 @@ class AdminServiceTest extends AbstractPostgresTest {
         assertThat(admin.listUsers(second.id())).isNotEmpty();
     }
 
+    @Test
+    @DisplayName("the session says whether the account administers the instance")
+    void theSessionCarriesTheAdminFlag() {
+        UUID administrator = anAdministrator();
+        NewAccount ordinary = admin.createUser(administrator, "plain@example.com", null, null, false);
+        NewAccount second = admin.createUser(administrator, "boss@example.com", null, null, true);
+
+        // So the client can decide whether to offer an administration screen without
+        // probing a route it is probably not allowed to call.
+        assertThat(auth.login("plain@example.com", ordinary.password(), "L", "web").isAdmin())
+                .isFalse();
+        assertThat(auth.login("boss@example.com", second.password(), "L", "web").isAdmin())
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("the flag is read fresh, not carried in a token that outlives the change")
+    void revokingAdminTakesEffectImmediately() {
+        UUID administrator = anAdministrator();
+        NewAccount second = admin.createUser(administrator, "temp@example.com", null, null, true);
+        Session theirs = auth.login("temp@example.com", second.password(), "L", "web");
+        assertThat(theirs.isAdmin()).isTrue();
+
+        jdbc.sql("UPDATE app_user SET is_admin = false WHERE id = :id")
+                .param("id", second.id()).update();
+
+        // The token they are still holding has not expired, and it does not matter: the
+        // authorization check asks the database, not the claim.
+        assertThatThrownBy(() -> admin.listUsers(second.id())).isInstanceOf(AccessDenied.class);
+    }
+
     // ------------------------------------------------- setting a password
 
     @Test

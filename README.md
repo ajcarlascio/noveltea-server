@@ -87,6 +87,55 @@ npm test                   # every Node workspace
 
 ---
 
+## Running it with Docker
+
+Four containers: Postgres, the API, the compile worker, and a web server holding the
+browser client. Images are published to GHCR on every push to `main`.
+
+```bash
+curl -O https://raw.githubusercontent.com/ajcarlascio/noveltea-server/main/deploy/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/ajcarlascio/noveltea-server/main/deploy/.env.example
+# fill in NOVELTEA_JWT_SECRET and POSTGRES_PASSWORD; both refuse to default
+docker compose up -d
+```
+
+Then open `http://localhost:8080` and sign in with `admin@localhost` / `admin` — which the
+server will immediately make you replace. See **First run** above.
+
+| Image | |
+|---|---|
+| `ghcr.io/ajcarlascio/noveltea-api` | Spring Boot API. Runs Liquibase at startup, so there is no separate migration step. |
+| `ghcr.io/ajcarlascio/noveltea-worker` | Compile worker. |
+| `ghcr.io/ajcarlascio/noveltea-web` | The browser client, from the `noveltea` repository. |
+
+`latest` follows `main`; a `v*` tag publishes that version too. Pin `NOVELTEA_VERSION` in
+`.env` once the instance is one you rely on.
+
+**The client is served from the same origin as the API**, with `/api` and `/health` proxied
+through the web container. That is what lets `noveltea.cors.allowed-origins` stay empty, and
+an empty allow-list means no other origin can drive the browser client. Splitting them
+across two hostnames works, but then the client's origin has to be listed.
+
+**Three volumes, and only one of them matters.** `pgdata` holds every novel on the instance;
+`exports` and `staging` hold compile artifacts, which regenerate. Back up the database:
+
+```bash
+docker compose exec -T postgres pg_dump -Fc -U noveltea noveltea > noveltea-$(date +%F).dump
+```
+
+Postgres publishes no port. Nothing outside the compose network connects to it, and putting
+the one container that holds the writing onto the host network buys nothing.
+
+Building the images yourself, from the repository root — both need it, because the Gradle
+build is multi-project and the worker resolves `packages/compile` through an npm workspace:
+
+```bash
+docker build -f api/Dockerfile    -t noveltea-api    .
+docker build -f worker/Dockerfile -t noveltea-worker .
+```
+
+---
+
 ## API documentation
 
 The OpenAPI spec lives at **`docs/api/openapi.yaml`**, checked into the repo rather than

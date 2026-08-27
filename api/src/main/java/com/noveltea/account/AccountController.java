@@ -47,12 +47,14 @@ public class AccountController {
             String refreshToken,
             long expiresIn,
             boolean mustChangePassword,
+            boolean isAdmin,
             int devicesSignedOut) {
         static ChangePasswordResponse of(PasswordChange change) {
             Session s = change.session();
             return new ChangePasswordResponse(
                     s.userId(), s.deviceId(), s.accessToken(), s.refreshToken(),
-                    s.expiresInSeconds(), s.mustChangePassword(), change.devicesSignedOut());
+                    s.expiresInSeconds(), s.mustChangePassword(), s.isAdmin(),
+                    change.devicesSignedOut());
         }
     }
 

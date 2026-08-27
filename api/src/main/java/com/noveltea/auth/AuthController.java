@@ -38,11 +38,11 @@ public class AuthController {
      */
     public record SessionResponse(
             UUID userId, UUID deviceId, String accessToken, String refreshToken,
-            long expiresIn, boolean mustChangePassword) {
+            long expiresIn, boolean mustChangePassword, boolean isAdmin) {
         static SessionResponse of(Session s) {
             return new SessionResponse(
                     s.userId(), s.deviceId(), s.accessToken(), s.refreshToken(),
-                    s.expiresInSeconds(), s.mustChangePassword());
+                    s.expiresInSeconds(), s.mustChangePassword(), s.isAdmin());
         }
     }
 

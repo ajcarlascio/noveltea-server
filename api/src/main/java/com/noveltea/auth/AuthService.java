@@ -59,7 +59,10 @@ public class AuthService {
      */
     public record Session(
             UUID userId, UUID deviceId, String accessToken, String refreshToken,
-            long expiresInSeconds, boolean mustChangePassword) {}
+            long expiresInSeconds, boolean mustChangePassword, boolean isAdmin) {}
+
+    /** The two account flags a client needs at sign-in, read together. */
+    private record Flags(boolean mustChangePassword, boolean isAdmin) {}
 
     public record DeviceInfo(
             UUID id, String name, String platform, OffsetDateTime createdAt,
@@ -148,7 +151,7 @@ public class AuthService {
         }
         String refreshToken = tokens.generateRefreshToken();
         storeRefreshToken(deviceId, refreshToken);
-        return session(userId, deviceId, refreshToken, mustChangePassword(userId));
+        return session(userId, deviceId, refreshToken, flags(userId));
     }
 
     // --------------------------------------------------------------- pairing
@@ -219,13 +222,11 @@ public class AuthService {
             throw new InvalidCredentials(GENERIC_FAILURE);
         }
         Map<String, Object> device = jdbc.sql("""
-                SELECT d.id, d.user_id, u.must_change_password
-                  FROM device d
-                  JOIN app_user u ON u.id = d.user_id
-                 WHERE d.refresh_token_hash = :hash
-                   AND d.revoked_at IS NULL
-                   AND (d.refresh_token_expires_at IS NULL OR d.refresh_token_expires_at > now())
-                 FOR UPDATE OF d
+                SELECT id, user_id FROM device
+                 WHERE refresh_token_hash = :hash
+                   AND revoked_at IS NULL
+                   AND (refresh_token_expires_at IS NULL OR refresh_token_expires_at > now())
+                 FOR UPDATE
                 """)
                 .param("hash", tokens.hash(refreshToken))
                 .query()
@@ -239,8 +240,7 @@ public class AuthService {
         String rotated = tokens.generateRefreshToken();
         storeRefreshToken(deviceId, rotated);
 
-        return session(userId, deviceId, rotated,
-                Boolean.TRUE.equals(device.get("must_change_password")));
+        return session(userId, deviceId, rotated, flags(userId));
     }
 
     // --------------------------------------------------------------- devices
@@ -312,26 +312,30 @@ public class AuthService {
         // Read here rather than passed in by each caller: register, login and pair all
         // reach this line, and a caller that forgot the argument would mint a token with
         // the lock quietly missing.
-        return session(userId, deviceId, refreshToken, mustChangePassword(userId));
+        return session(userId, deviceId, refreshToken, flags(userId));
     }
 
-    private Session session(UUID userId, UUID deviceId, String refreshToken, boolean mustChange) {
+    private Session session(UUID userId, UUID deviceId, String refreshToken, Flags flags) {
         return new Session(
                 userId,
                 deviceId,
-                tokens.issueAccessToken(userId, deviceId, mustChange),
+                // Only the lock goes into the token. Being an administrator is not a claim
+                // the API ever reads from one: AdminService asks the database every time,
+                // so revoking it takes effect at once rather than in fifteen minutes.
+                tokens.issueAccessToken(userId, deviceId, flags.mustChangePassword()),
                 refreshToken,
                 tokens.accessTokenTtl().toSeconds(),
-                mustChange);
+                flags.mustChangePassword(),
+                flags.isAdmin());
     }
 
-    private boolean mustChangePassword(UUID userId) {
-        return Boolean.TRUE.equals(jdbc
-                .sql("SELECT must_change_password FROM app_user WHERE id = :id")
+    private Flags flags(UUID userId) {
+        return jdbc
+                .sql("SELECT must_change_password, is_admin FROM app_user WHERE id = :id")
                 .param("id", userId)
-                .query(Boolean.class)
+                .query((rs, n) -> new Flags(rs.getBoolean(1), rs.getBoolean(2)))
                 .optional()
-                .orElse(false));
+                .orElse(new Flags(false, false));
     }
 
     private void storeRefreshToken(UUID deviceId, String refreshToken) {
