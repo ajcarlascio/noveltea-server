@@ -53,8 +53,12 @@ class WebApiTest extends AbstractPostgresTest {
                 .andExpect(r -> assertThat(r.getResponse().getStatus()).isEqualTo(401));
     }
 
+    /**
+     * With {@code noveltea.auth.open-registration} on, which the test profile sets and the
+     * shipped configuration does not — see {@code RegistrationPolicyTest} for the default.
+     */
     @Test
-    @DisplayName("registering is open and returns a usable session")
+    @DisplayName("where registration is open, it returns a usable session")
     void registrationIsOpen() throws Exception {
         String payload = """
                 {"email":"open-%s@example.com","password":"%s","deviceName":"Laptop","platform":"web"}

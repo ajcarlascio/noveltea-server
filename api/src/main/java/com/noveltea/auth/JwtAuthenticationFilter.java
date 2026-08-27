@@ -42,7 +42,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String deviceClaim = jwt.getClaimAsString(TokenService.DEVICE_CLAIM);
                 UUID deviceId = deviceClaim == null ? null : UUID.fromString(deviceClaim);
 
-                CurrentUser principal = new CurrentUser(userId, deviceId);
+                boolean mustChangePassword =
+                        Boolean.TRUE.equals(jwt.getClaim(TokenService.PASSWORD_CHANGE_CLAIM));
+
+                CurrentUser principal = new CurrentUser(userId, deviceId, mustChangePassword);
                 var authentication = new UsernamePasswordAuthenticationToken(principal, null, List.of());
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (Exception ignored) {

@@ -37,6 +37,15 @@ noveltea:
     access-token-ttl: 15m
     refresh-token-ttl: 60d
     pairing-code-ttl: 10m
+    # On for the suite: most tests need an account and reach for auth.register to get one.
+    # The shipped default is the opposite — AuthServiceTest pins the closed behaviour with
+    # an explicit @SpringBootTest property rather than relying on this file.
+    open-registration: true
+
+  admin:
+    # Off, so the bootstrap does not race AbstractPostgresTest's TRUNCATE or log a
+    # first-run warning per context. AdminBootstrapTest drives it directly instead.
+    enabled: false
 
   limits:
     sync-page-size: 200

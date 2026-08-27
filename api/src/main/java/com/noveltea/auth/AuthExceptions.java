@@ -17,6 +17,21 @@ public final class AuthExceptions {
         }
     }
 
+    /**
+     * Self-registration is off on this instance.
+     *
+     * <p>Distinct from {@link InvalidCredentials} on purpose, and it leaks nothing: the
+     * answer is the same for every caller and every address, so it cannot be used to learn
+     * whether an account exists. Somebody who has been told "sign up at my server" needs to
+     * hear "ask the administrator", not "invalid credentials".
+     */
+    public static class RegistrationClosed extends RuntimeException {
+        public RegistrationClosed() {
+            super("this server does not accept self-registration; ask its administrator "
+                    + "for an account");
+        }
+    }
+
     public static class EmailAlreadyRegistered extends RuntimeException {
         public EmailAlreadyRegistered(String email) {
             super("already registered: " + email);

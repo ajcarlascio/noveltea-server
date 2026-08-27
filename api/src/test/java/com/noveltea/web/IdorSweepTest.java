@@ -69,9 +69,13 @@ class IdorSweepTest extends AbstractPostgresTest {
     /** Every path variable the API uses. A new one must be added here, not skipped. */
     private static String fill(
             String pattern, UUID projectId, UUID itemId, UUID deviceId,
-            UUID snapshotId, UUID commentId, UUID jobId) {
+            UUID snapshotId, UUID commentId, UUID jobId, UUID userId) {
         return pattern
                 .replace("{projectId}", projectId.toString())
+                // The administration routes name an account rather than a resource inside
+                // one. Filled with the victim's own id, so what the sweep asks is the
+                // question that matters: can a stranger take over somebody else's account?
+                .replace("{userId}", userId.toString())
                 .replace("{itemId}", itemId.toString())
                 .replace("{documentId}", itemId.toString())
                 .replace("{copyId}", itemId.toString())
@@ -132,7 +136,7 @@ class IdorSweepTest extends AbstractPostgresTest {
         for (Route route : routes) {
             boolean targetsVictim = route.pattern().contains("{");
             String path = fill(route.pattern(), projectId, itemId, victim.deviceId(),
-                    snapshotId, commentId, jobId);
+                    snapshotId, commentId, jobId, victim.userId());
             if (path.contains("{")) {
                 unfillable.add(route.method() + " " + route.pattern());
                 continue;
@@ -197,7 +201,8 @@ class IdorSweepTest extends AbstractPostgresTest {
     void anonymousCannotReachAnyRoute() throws Exception {
         for (Route route : mappedRoutes()) {
             String path = fill(route.pattern(), UUID.randomUUID(), UUID.randomUUID(),
-                    UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+                    UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                    UUID.randomUUID());
             assertThat(path).as("%s has an unfillable path variable", route.pattern())
                     .doesNotContain("{");
 

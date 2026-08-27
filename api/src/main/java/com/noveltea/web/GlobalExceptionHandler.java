@@ -4,6 +4,7 @@ import com.noveltea.account.AccountExceptions.NoDeletionPending;
 import com.noveltea.auth.AuthExceptions.AccessDenied;
 import com.noveltea.auth.AuthExceptions.EmailAlreadyRegistered;
 import com.noveltea.auth.AuthExceptions.InvalidCredentials;
+import com.noveltea.auth.AuthExceptions.RegistrationClosed;
 import com.noveltea.binder.BinderExceptions.BinderCycle;
 import com.noveltea.compile.CompileExceptions.ArtifactUnavailable;
 import com.noveltea.comment.CommentExceptions.CommentNotFound;
@@ -61,6 +62,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> accessDenied(AccessDenied e, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("not_found", "not found", request.getRequestURI()));
+    }
+
+    /**
+     * 403, not 404. The route exists and is documented; this instance has simply turned it
+     * off, and pretending otherwise would send somebody hunting for a typo in the address.
+     * It reveals nothing about any account, because the answer does not depend on one.
+     */
+    @ExceptionHandler(RegistrationClosed.class)
+    public ResponseEntity<ApiError> registrationClosed(
+            RegistrationClosed e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiError.of("registration_closed", e.getMessage(), request.getRequestURI()));
     }
 
     @ExceptionHandler(EmailAlreadyRegistered.class)

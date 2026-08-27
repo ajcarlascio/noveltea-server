@@ -25,6 +25,18 @@ public class TokenService {
 
     public static final String DEVICE_CLAIM = "did";
 
+    /**
+     * Present, and true, only while the holder still has to choose a password.
+     *
+     * <p>In the token rather than read from the database on every request: the filter
+     * chain is stateless by design and this is the hot path for sync. The cost is that a
+     * token minted before the flag was set does not carry it, which is why every path
+     * that sets {@code must_change_password} on an existing account also revokes that
+     * account's devices — a revoked device cannot refresh, so the stale token dies with
+     * its fifteen-minute lifetime and nothing can be issued to replace it.
+     */
+    public static final String PASSWORD_CHANGE_CLAIM = "pwc";
+
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final Base64.Encoder URL64 = Base64.getUrlEncoder().withoutPadding();
     /** Excludes I, L, O, 0, 1 — a pairing code gets read aloud and typed by a human. */
@@ -62,14 +74,22 @@ public class TokenService {
     }
 
     public String issueAccessToken(UUID userId, UUID deviceId) {
+        return issueAccessToken(userId, deviceId, false);
+    }
+
+    public String issueAccessToken(UUID userId, UUID deviceId, boolean mustChangePassword) {
         Instant now = Instant.now();
-        JwtClaimsSet claims = JwtClaimsSet.builder()
+        JwtClaimsSet.Builder claimsBuilder = JwtClaimsSet.builder()
                 .issuer("noveltea")
                 .issuedAt(now)
                 .expiresAt(now.plus(properties.accessTokenTtl()))
                 .subject(userId.toString())
-                .claim(DEVICE_CLAIM, deviceId.toString())
-                .build();
+                .claim(DEVICE_CLAIM, deviceId.toString());
+        // Added only when true, so an ordinary token is byte-for-byte what it always was.
+        if (mustChangePassword) {
+            claimsBuilder.claim(PASSWORD_CHANGE_CLAIM, true);
+        }
+        JwtClaimsSet claims = claimsBuilder.build();
         // The header must name HS256 explicitly: the encoder defaults to RS256 and would
         // fail to select our symmetric key ("Failed to select a JWK signing key").
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();

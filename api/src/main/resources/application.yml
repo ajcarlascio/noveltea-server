@@ -51,6 +51,25 @@ noveltea:
     access-token-ttl: 15m
     refresh-token-ttl: 60d
     pairing-code-ttl: 10m
+    # Off by default, which is the opposite of what a hosted service would choose and the
+    # right answer for somebody's own server: an instance on the open internet where anyone
+    # passing can mint an account is not a feature. Accounts come from an administrator —
+    # see noveltea.admin below. Turn it on only if you meant to run an open instance.
+    open-registration: ${NOVELTEA_OPEN_REGISTRATION:false}
+
+  admin:
+    # The account a fresh instance starts with, so there is somebody to sign in as.
+    # Created ONLY when the instance has no administrator at all; a restart never
+    # rewrites a password anyone has since chosen.
+    #
+    # Unlike jwt-secret these have defaults, because the failure modes are opposite: a
+    # default signing key reaches production silently and stays, while a default password
+    # is refused by the server on first use. Any password shorter than the 12-character
+    # minimum — including the built-in `admin` — sets must_change_password, and until the
+    # account chooses a real one every route but POST /api/v1/account/password answers 403.
+    enabled: ${NOVELTEA_ADMIN_ENABLED:true}
+    email: ${NOVELTEA_ADMIN_EMAIL:admin@localhost}
+    password: ${NOVELTEA_ADMIN_PASSWORD:admin}
 
   limits:
     # Overridable per environment. Services read these rather than hard-coding bounds.

@@ -28,18 +28,31 @@ public class AuthController {
 
     public record RefreshRequest(String refreshToken) {}
 
-    /** The refresh token is returned once and never retrievable again. */
+    /**
+     * The refresh token is returned once and never retrievable again.
+     *
+     * @param mustChangePassword this token works, and works for exactly one route:
+     *     POST /api/v1/account/password. Every other answers 403 password_change_required.
+     *     A client seeing this should send the author to a change-password form rather than
+     *     to their projects.
+     */
     public record SessionResponse(
-            UUID userId, UUID deviceId, String accessToken, String refreshToken, long expiresIn) {
+            UUID userId, UUID deviceId, String accessToken, String refreshToken,
+            long expiresIn, boolean mustChangePassword) {
         static SessionResponse of(Session s) {
             return new SessionResponse(
-                    s.userId(), s.deviceId(), s.accessToken(), s.refreshToken(), s.expiresInSeconds());
+                    s.userId(), s.deviceId(), s.accessToken(), s.refreshToken(),
+                    s.expiresInSeconds(), s.mustChangePassword());
         }
     }
 
     @Operation(
             summary = "Register a new account",
-            description = "Public — this and login are the only ways to obtain a token. "
+            description = "Public, and OFF unless noveltea.auth.open-registration is set — "
+                    + "a self-hosted instance makes accounts through an administrator, not "
+                    + "through whoever can reach the address. Closed answers 403 "
+                    + "registration_closed. "
+                    + "Otherwise this and login are the only ways to obtain a token. "
                     + "Every auth failure elsewhere in this API returns one identical message, "
                     + "so a caller cannot distinguish \"no such account\" from \"wrong password\".",
             security = {})
