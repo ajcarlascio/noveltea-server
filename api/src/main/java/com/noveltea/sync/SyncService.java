@@ -913,7 +913,7 @@ public class SyncService {
     private UUID createConflictCopy(UUID projectId, UUID deviceId, UUID originalId, String content, Long baseVersion) {
         Map<String, Object> original = jdbc
                 .sql("""
-                        SELECT parent_id, title, order_key, deleted_at FROM binder_item
+                        SELECT parent_id, title, order_key FROM binder_item
                          WHERE id = :id AND project_id = :projectId
                         """)
                 .param("id", originalId)
@@ -928,14 +928,15 @@ public class SyncService {
         String afterKey;
         String title;
 
-        if (original == null
-                || original.get("deleted_at") != null
-                || isTrashNode(projectId, (UUID) original.get("parent_id"))) {
-            // The original is gone, tombstoned, or sitting in the trash node (trashing is
-            // a move, not a delete — the item stays live there until "empty trash"). A
-            // copy placed beside it would be tombstoned by that emptying and destroyed by
-            // retention, taking the rescued words with it. Park the copy live at project
-            // root instead; the author still finds it in Conflicts.
+        if (original == null || !binder.isLiveAndOutsideTrash(projectId, originalId)) {
+            // The original is gone, tombstoned, or somewhere under the trash node —
+            // anywhere in that subtree, not just directly beneath it. Trashing is a move,
+            // so a document inside a trashed FOLDER still has that folder as its parent
+            // and only the recursive walk sees the trash above it. "Empty trash" recurses
+            // the same way, so a copy placed beside such an original is tombstoned by the
+            // next emptying and destroyed by retention, taking the rescued words with it.
+            // Park the copy live at project root instead; the author still finds it in
+            // Conflicts.
             parentId = null;
             afterKey = null;
             title = original == null
@@ -952,19 +953,6 @@ public class SyncService {
                 nextKeyAfter(projectId, parentId, afterKey), deviceId, originalId, baseVersion);
         insertDocumentRaw(projectId, deviceId, copyId, content);
         return copyId;
-    }
-
-    private boolean isTrashNode(UUID projectId, UUID parentId) {
-        if (parentId == null) {
-            return false;
-        }
-        return Boolean.TRUE.equals(jdbc.sql("""
-                SELECT EXISTS (SELECT 1 FROM binder_item
-                                WHERE id = :id AND project_id = :projectId AND type = 'trash')
-                """)
-                .param("id", parentId)
-                .param("projectId", projectId)
-                .query(Boolean.class).single());
     }
 
     /** Preserves content whose original binder_item no longer exists, at project root. */

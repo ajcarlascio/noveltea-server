@@ -127,6 +127,48 @@ class SyncAuditFindingsTest extends AbstractPostgresTest {
     }
 
     @Test
+    @DisplayName("C2: a conflict copy forked from an original inside a trashed FOLDER is also placed at root")
+    void conflictCopyOfNestedTrashedOriginalLandsAtRoot() {
+        // Trashing is a move, so a document inside a trashed folder keeps that folder as
+        // its parent — the folder is what moved. Checking only the immediate parent for
+        // "is this the trash node" therefore misses every nested item, and "empty trash"
+        // recurses over the whole subtree, so a copy placed beside such an original is
+        // tombstoned with it and destroyed by retention.
+        UUID folderId = UUID.randomUUID();
+        jdbc.sql("""
+                INSERT INTO binder_item (id, project_id, type, title, order_key, updated_by_device_id)
+                VALUES (:id, :p, 'folder', 'Act One', 'm', :d)
+                """).param("id", folderId).param("p", projectId).param("d", deviceA).update();
+
+        UUID docId = seedDocument("Chapter One", "V", "original");
+        jdbc.sql("UPDATE binder_item SET parent_id = :f WHERE id = :id")
+                .param("f", folderId).param("id", docId).update();
+
+        sync.push(projectId, deviceA, List.of(documentUpdate(docId, 1L, "device A rewrite")));
+        binder.trash(folderId, deviceA);
+
+        PushResponse response = sync.push(projectId, deviceB,
+                List.of(documentUpdate(docId, 1L, "device B unsent words")));
+
+        UUID copyId = response.conflicts().get(0).conflictCopyId();
+        assertThat(copyId).isNotNull();
+        assertThat(jdbc.sql("SELECT parent_id FROM binder_item WHERE id = :id")
+                .param("id", copyId).query(UUID.class).optional().orElse(null))
+                .as("the copy must sit at project root, not inside the trashed folder")
+                .isNull();
+
+        // The check that actually matters: emptying the trash must not take it.
+        binder.emptyTrash(projectId, deviceA);
+        assertThat(jdbc.sql("SELECT deleted_at FROM binder_item WHERE id = :id")
+                .param("id", copyId).query(java.time.OffsetDateTime.class).optional().orElse(null))
+                .as("emptying the trash must not tombstone the rescued words")
+                .isNull();
+        assertThat(jdbc.sql("SELECT content::text FROM document WHERE id = :id")
+                .param("id", copyId).query(String.class).single())
+                .contains("device B unsent words");
+    }
+
+    @Test
     @DisplayName("C2: a conflict copy forked from a trashed original is placed at root, not inside the trash")
     void conflictCopyOfTrashedOriginalLandsAtRoot() {
         UUID docId = seedDocument("Chapter One", "V", "original");
