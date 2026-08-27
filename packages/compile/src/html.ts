@@ -57,10 +57,29 @@ function cssValue(value: string, name: string): string {
   return value;
 }
 
+/**
+ * Escapes author text for a CSS string inside the `<style>` element.
+ *
+ * Two contexts have to be satisfied at once, and satisfying only one is still a hole:
+ *
+ * - **The CSS string.** A bare `"` closes it and a raw newline is a parse error.
+ * - **The HTML raw-text element.** `<style>` ends at the first `</style`, whatever the CSS
+ *   around it is doing. A string that is quote-safe is still an injection if it can carry
+ *   that sequence, so `<` and `>` are escaped too.
+ *
+ * Deliberately not `escapeHtml`: entities are NOT decoded inside `<style>`, so a running
+ * head of "Smith & Sons" would print the five characters `&amp;` in the margin. Text has
+ * to be escaped in the language it actually lands in.
+ *
+ * The trailing space terminates each escape, which is what stops `\3C` followed by a hex
+ * digit from being read as one longer code point.
+ */
 function escapeCssString(value: string): string {
   return value
     .replace(/\\/g, "\\\\")
     .replace(/"/g, "\\22 ")
+    .replace(/</g, "\\3C ")
+    .replace(/>/g, "\\3E ")
     .replace(/\r/g, "\\D ")
     .replace(/\n/g, "\\A ");
 }
