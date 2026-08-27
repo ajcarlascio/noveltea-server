@@ -772,6 +772,16 @@ public class SyncService {
                        SET content = CAST(:content AS jsonb),
                            search_text = :searchText,
                            word_count = :wordCount,
+                           -- Absent means "I am not talking about this field", not "clear
+                           -- it". The editor saves content and knows nothing about the
+                           -- synopsis; the corkboard saves a synopsis and sends the body
+                           -- back unchanged. Treating a missing key as null would make
+                           -- either one silently wipe the other's work — and would do it
+                           -- to every client that predates this, on every keystroke save.
+                           synopsis = CASE WHEN CAST(:synopsisSent AS boolean)
+                                           THEN CAST(:synopsis AS text) ELSE synopsis END,
+                           notes = CASE WHEN CAST(:notesSent AS boolean)
+                                        THEN CAST(:notes AS text) ELSE notes END,
                            version = :next,
                            updated_by_device_id = :deviceId,
                            updated_at = now()
@@ -782,6 +792,10 @@ public class SyncService {
                     .param("content", content)
                     .param("searchText", optionalText(change, "search_text"))
                     .param("wordCount", optionalInt(change, "word_count", 0))
+                    .param("synopsisSent", sent(change, "synopsis"))
+                    .param("synopsis", optionalText(change, "synopsis"))
+                    .param("notesSent", sent(change, "notes"))
+                    .param("notes", optionalText(change, "notes"))
                     .param("next", next)
                     .param("deviceId", deviceId)
                     .param("id", change.entityId())
@@ -1035,14 +1049,21 @@ public class SyncService {
     // ------------------------------------------------------------- helpers
 
     private void insertDocument(UUID projectId, UUID deviceId, UUID id, String content, ChangeRequest change) {
+        // No CASE here: there is no existing value to leave alone on a row being created,
+        // so absent and null mean the same thing and both are correct.
         jdbc.sql("""
-                INSERT INTO document (id, content, search_text, word_count, version, updated_by_device_id)
-                VALUES (:id, CAST(:content AS jsonb), :searchText, :wordCount, 1, :deviceId)
+                INSERT INTO document
+                    (id, content, search_text, word_count, synopsis, notes, version,
+                     updated_by_device_id)
+                VALUES (:id, CAST(:content AS jsonb), :searchText, :wordCount, :synopsis,
+                        :notes, 1, :deviceId)
                 """)
                 .param("id", id)
                 .param("content", content)
                 .param("searchText", optionalText(change, "search_text"))
                 .param("wordCount", optionalInt(change, "word_count", 0))
+                .param("synopsis", optionalText(change, "synopsis"))
+                .param("notes", optionalText(change, "notes"))
                 .param("deviceId", deviceId)
                 .update();
         recordChange(projectId, "document", id, "create", deviceId);
@@ -1142,6 +1163,19 @@ public class SyncService {
             throw new IllegalArgumentException("missing required field: " + field);
         }
         return value;
+    }
+
+    /**
+     * Whether the client mentioned this field at all.
+     *
+     * For a nullable column, <em>absent</em> and <em>present but null</em> are different
+     * instructions: the first says "not my business", the second says "clear it". Every
+     * client writes a document row through more than one pane, and each pane sends only
+     * what it knows about, so collapsing the two would let whichever saved last erase the
+     * rest.
+     */
+    private boolean sent(ChangeRequest change, String field) {
+        return change.data() != null && change.data().has(field);
     }
 
     private String optionalText(ChangeRequest change, String field) {
