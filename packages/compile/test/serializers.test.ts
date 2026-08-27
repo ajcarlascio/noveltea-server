@@ -293,4 +293,49 @@ describe("paginated html", () => {
     assert.doesNotMatch(output, /<script>alert\(1\)/);
     assert.doesNotMatch(output, /<script>alert\(2\)/);
   });
+
+  test("rejects page options that can break out of the stylesheet", () => {
+    assert.throws(
+      () => compile([chapter("One", "p")], "html", { page: { fontFamily: "serif; color: red" } }),
+      /fontFamily contains characters/,
+    );
+    assert.throws(
+      () => compile([chapter("One", "p")], "html", { page: { margin: "1in</style>" } }),
+      /margin contains characters/,
+    );
+  });
+
+  test("CSS-escapes quotes and newlines in a running head", () => {
+    const { output } = compile([chapter("One", "p")], "html", {
+      page: { runningHead: 'A "quoted"\nhead' },
+    });
+    assert.match(parse(output).querySelector("style")?.text ?? "", /A \\22 quoted\\22 \\A head/);
+  });
+
+  test("a running head cannot close the style element it sits in", () => {
+    // <style> is a raw-text element: it ends at the first </style, whatever the CSS around
+    // it is doing. Escaping quotes alone leaves this open, which is exactly how it was
+    // reopened once already — the running head reached the page unescaped for HTML.
+    const { output } = compile([chapter("One", "p")], "html", {
+      page: { runningHead: "</style><script>alert(1)</script><style>" },
+    });
+    const parsed = parse(output);
+    assert.equal(parsed.querySelectorAll("script").length, 0, "no script element may appear");
+    assert.equal(parsed.querySelectorAll("style").length, 1, "the stylesheet must stay whole");
+    // The escaped form is what should be there, and it still renders as the author's text.
+    assert.match(parsed.querySelector("style")?.text ?? "", /\\3C \/style\\3E /);
+  });
+
+  test("a running head keeps its own punctuation rather than showing entities", () => {
+    // CSS strings do not decode entities, so HTML-escaping here would print "&amp;" in the
+    // page margin. The escape has to belong to the language the text lands in.
+    const { output } = compile([chapter("One", "p")], "html", {
+      page: { runningHead: "Smith & Sons" },
+    });
+    // Asserted against the raw output, not the parsed .text: node-html-parser decodes
+    // entities in <style>, which a browser does not, so reading .text here would make
+    // this pass either way.
+    assert.match(output, /Smith & Sons /);
+    assert.doesNotMatch(output, /&amp;/);
+  });
 });

@@ -339,7 +339,16 @@ public class BinderService {
                 .query(Boolean.class).single());
     }
 
-    private boolean isLiveAndOutsideTrash(UUID projectId, UUID itemId) {
+    /**
+     * Whether an item is live and no ancestor of it is tombstoned or the trash node.
+     *
+     * <p>Public because the sync path needs the same answer: trashing is a move, so an
+     * item's own {@code deleted_at} and its own {@code parent_id} say nothing about
+     * whether the branch it hangs from is on its way out. Anything placed beside an item
+     * that fails this check is destroyed by the next "empty trash", which recurses over
+     * the whole subtree.
+     */
+    public boolean isLiveAndOutsideTrash(UUID projectId, UUID itemId) {
         return Boolean.TRUE.equals(jdbc.sql("""
                 WITH RECURSIVE ancestors AS (
                     SELECT id, parent_id, type, deleted_at FROM binder_item WHERE id = :id
