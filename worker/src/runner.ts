@@ -77,6 +77,18 @@ export async function runJob(
   const result = compile(selected, job.format as CoreFormat, {
     includeFolderHeadings: true,
     includeDocumentTitles: false,
+    // HTML is the one Core format with a page to lay out, so it is the one that gets
+    // the manuscript setup. Passing `page` at all is what turns a body fragment into a
+    // whole document; the defaults in PageSetup are already standard manuscript format
+    // — letter, one-inch margins, 12pt, double-spaced, ragged right — so there is
+    // nothing to restate here, and restating it would be a second place to drift.
+    //
+    // txt and md carry no page layout and cannot: neither format has a concept of a
+    // page. What the app tells an author about formats says exactly that, and this is
+    // the code that has to keep it true.
+    ...(job.format === "html"
+      ? { page: { runningHead: projectTitle }, title: projectTitle }
+      : {}),
   });
 
   const directory = directoryFor(job, config);

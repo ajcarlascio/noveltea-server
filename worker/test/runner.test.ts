@@ -1,6 +1,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { filenameFor, directoryFor } from "../src/runner.ts";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { filenameFor, directoryFor, runJob } from "../src/runner.ts";
 import type { ClaimedJob } from "../src/repository.ts";
 
 const job = (destination: string): ClaimedJob => ({
@@ -38,6 +41,60 @@ describe("filenames", () => {
   test("the extension follows the format", () => {
     assert.match(filenameFor("Book", "html", at), /\.html$/);
     assert.match(filenameFor("Book", "txt", at), /\.txt$/);
+  });
+});
+
+describe("html page setup", () => {
+  // Through runJob, not compile(): the page setup is a decision the runner makes, and a
+  // test that called compile() directly with `page` would pass just as happily with the
+  // runner's option removed.
+  const doc = (text: string) => ({
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+  });
+  const items = [
+    { id: "a", title: "Chapter One", type: "document" as const, depth: 0, content: doc("Once.") },
+  ];
+  const htmlJob = (format: string): ClaimedJob => ({
+    id: "j", projectId: "p", format, destination: "download",
+    presetId: null, inlineConfig: null, attempts: 1,
+  });
+
+  async function exportWith(format: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "noveltea-page-"));
+    try {
+      const config = {
+        connectionString: "", storagePath: join(root, "out"), stagingPath: join(root, "staging"),
+        pollIntervalMs: 1000, maxAttempts: 3, leaseSeconds: 60,
+      };
+      const result = await runJob(htmlJob(format), items, "The Lighthouse", null, config);
+      return await readFile(result.outputPath, "utf8");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  test("an html export is a whole manuscript-formatted document, not a fragment", async () => {
+    const output = await exportWith("html");
+    // Standard manuscript format is what a submission is expected to look like; these
+    // are the parts of it a page carries. Without the runner passing `page` the output
+    // is a bare body fragment and every one of these fails.
+    assert.match(output, /<!doctype html>/i);
+    assert.match(output, /size: letter;/);
+    assert.match(output, /margin: 1in;/);
+    assert.match(output, /font-size: 12pt;/);
+    assert.match(output, /line-height: 2;/);
+    assert.match(output, /text-indent: 0.5in;/);
+    // The project title becomes the running head beside the page number.
+    assert.match(output, /The Lighthouse/);
+  });
+
+  test("txt and md carry no page setup, because neither format has a page", async () => {
+    for (const format of ["txt", "md"]) {
+      const output = await exportWith(format);
+      assert.doesNotMatch(output, /<!doctype html>/i);
+      assert.doesNotMatch(output, /@page/);
+    }
   });
 });
 
