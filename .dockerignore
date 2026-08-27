@@ -1,0 +1,23 @@
+# Build output and caches: copying these makes the context enormous and, worse, can
+# shadow what the image build is supposed to produce itself.
+.git
+.gradle
+build
+*/build
+api/build
+node_modules
+*/node_modules
+**/node_modules
+
+# Never into an image.
+.env
+*.env
+!deploy/.env.example
+
+# Developer noise.
+.idea
+.vscode
+*.iml
+.DS_Store
+docs/
+screenshots/

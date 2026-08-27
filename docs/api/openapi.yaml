@@ -19,8 +19,6 @@ servers:
 security:
 - bearerAuth: []
 tags:
-- name: Account
-  description: Password reset and account deletion.
 - name: Comments
   description: Anchored annotations and replies on a document.
 - name: Binder
@@ -30,10 +28,15 @@ tags:
 - name: Search
   description: "Full-text search across a project's titles, synopses, body text and\
     \ notes."
+- name: Account
+  description: "Changing your own password, password reset, and account deletion."
 - name: Documents
   description: "Document bodies, for clients rebuilding a replica."
 - name: Compile
   description: What this installation can export to.
+- name: Administration
+  description: "Instance administration: the accounts on this server. Nothing here\
+    \ grants access to anyone's projects or documents."
 - name: Snapshots
   description: "Point-in-time document copies: capture, list, restore."
 - name: Sync
@@ -462,9 +465,12 @@ paths:
       tags:
       - Auth
       summary: Register a new account
-      description: "Public — this and login are the only ways to obtain a token. Every\
-        \ auth failure elsewhere in this API returns one identical message, so a caller\
-        \ cannot distinguish \"no such account\" from \"wrong password\"."
+      description: "Public, and OFF unless noveltea.auth.open-registration is set\
+        \ — a self-hosted instance makes accounts through an administrator, not through\
+        \ whoever can reach the address. Closed answers 403 registration_closed. Otherwise\
+        \ this and login are the only ways to obtain a token. Every auth failure elsewhere\
+        \ in this API returns one identical message, so a caller cannot distinguish\
+        \ \"no such account\" from \"wrong password\"."
       operationId: register
       requestBody:
         content:
@@ -604,6 +610,98 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/SessionResponse"
+  /api/v1/admin/users:
+    get:
+      tags:
+      - Administration
+      summary: List the accounts on this instance
+      description: "Administrators only; anyone else is answered 404, because a 403\
+        \ would confirm the route exists."
+      operationId: users
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserSummary"
+    post:
+      tags:
+      - Administration
+      summary: Create an account
+      description: Omit `password` to have one generated. Either way the response
+        carries it once and it is never retrievable again — only its hash is stored
+        — and the new account must choose its own before it can use any other route.
+      operationId: create_3
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/NewAccount"
+  /api/v1/admin/users/{userId}/password:
+    post:
+      tags:
+      - Administration
+      summary: Set an account's password
+      description: "For an account that has lost access on an instance with no mail\
+        \ configured, where the emailed reset would write its link to a log the account\
+        \ holder cannot read. Signs out every device that account had, and requires\
+        \ it to choose a new password immediately."
+      operationId: setPassword
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPasswordRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/NewAccount"
+  /api/v1/account/password:
+    post:
+      tags:
+      - Account
+      summary: Change your own password
+      description: "Requires the current password. Signs out every OTHER device and\
+        \ returns a replacement token pair for this one, because the access token\
+        \ used to make the request predates the change. This is the only route an\
+        \ account required to change its password may reach — every other answers\
+        \ 403 password_change_required until it has."
+      operationId: changePassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ChangePasswordResponse"
   /api/v1/account/deletion:
     get:
       tags:
@@ -1356,6 +1454,10 @@ components:
         expiresIn:
           type: integer
           format: int64
+        mustChangePassword:
+          type: boolean
+        isAdmin:
+          type: boolean
     RefreshRequest:
       type: object
       properties:
@@ -1382,6 +1484,62 @@ components:
           type: string
         platform:
           type: string
+    CreateUserRequest:
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+        displayName:
+          type: string
+        admin:
+          type: boolean
+    NewAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        password:
+          type: string
+    SetPasswordRequest:
+      type: object
+      properties:
+        password:
+          type: string
+    ChangePasswordRequest:
+      type: object
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+    ChangePasswordResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        deviceId:
+          type: string
+          format: uuid
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          format: int64
+        mustChangePassword:
+          type: boolean
+        isAdmin:
+          type: boolean
+        devicesSignedOut:
+          type: integer
+          format: int32
     DeleteAccountRequest:
       type: object
       properties:
@@ -1744,6 +1902,28 @@ components:
           type: integer
           format: int64
         forkedAt:
+          type: string
+          format: date-time
+    UserSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        displayName:
+          type: string
+        admin:
+          type: boolean
+        guest:
+          type: boolean
+        mustChangePassword:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        deletionRequestedAt:
           type: string
           format: date-time
   securitySchemes:

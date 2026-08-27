@@ -1,0 +1,70 @@
+# Publishes the two server images to GHCR so an operator can pull rather than build.
+#
+# `latest` follows main. A tag publishes the version as well, which is what deploy/.env's
+# NOVELTEA_VERSION is for: an instance you rely on should be pinned, not tracking a branch.
+name: Publish images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  # A second push to main while the first is still building would race to the same tag.
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      # Independent images. One failing should not hide whether the other builds.
+      fail-fast: false
+      matrix:
+        include:
+          - image: noveltea-api
+            dockerfile: api/Dockerfile
+          - image: noveltea-worker
+            dockerfile: worker/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+
+      - uses: docker/build-push-action@v6
+        with:
+          # The repository root: both images are built from a multi-project tree and
+          # neither Dockerfile can see what it needs from its own directory.
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # arm64 covers the Raspberry Pi and Apple Silicon cases, which is a good part of
+          # what "self-hosted" means in practice.
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

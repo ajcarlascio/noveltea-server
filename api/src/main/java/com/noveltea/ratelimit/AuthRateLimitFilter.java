@@ -44,6 +44,9 @@ public class AuthRateLimitFilter extends OncePerRequestFilter {
             // other spends one.
             case "/api/v1/auth/password-reset", "/api/v1/auth/password-reset/confirm" ->
                     properties.loginAttemptsPerWindow();
+            // Authenticated, and still a credential endpoint: it takes the current password
+            // as proof, so an unattended signed-in device is somewhere to guess it.
+            case "/api/v1/account/password" -> properties.loginAttemptsPerWindow();
             default -> null;
         };
     }

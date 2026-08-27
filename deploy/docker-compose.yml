@@ -1,0 +1,102 @@
+# NovelTea, whole. Pull and run:
+#
+#   cp .env.example .env      # then edit it — two values have no default on purpose
+#   docker compose up -d
+#
+# Four containers: Postgres, the API, the compile worker, and a web server holding the
+# browser client. Only the last one publishes a port. The database is reachable on the
+# compose network and nowhere else, which is why it needs no TLS and no exposed port here.
+#
+# The client is served from the same origin as the API, with /api and /health proxied
+# through. That is not an arrangement of convenience: it is what makes
+# noveltea.cors.allowed-origins able to stay empty, and an empty allow-list is a browser
+# client that no other origin can drive.
+name: noveltea
+
+services:
+  postgres:
+    # 15+ for NULLS NOT DISTINCT, 13+ for xid8 / pg_current_xact_id. The schema does not
+    # work without them, so this is a floor rather than a preference.
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-noveltea}
+      POSTGRES_USER: ${POSTGRES_USER:-noveltea}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-noveltea} -d $${POSTGRES_DB:-noveltea}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    # Deliberately no `ports:`. This is the one container holding every novel on the
+    # instance; publishing 5432 to the host puts it on the network for no gain, since
+    # nothing outside this stack connects to it. Add a mapping only to run pg_dump from
+    # the host, and consider `docker compose exec postgres pg_dump` instead.
+
+  api:
+    image: ghcr.io/ajcarlascio/noveltea-api:${NOVELTEA_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-noveltea}
+      DB_USERNAME: ${POSTGRES_USER:-noveltea}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # No default anywhere in the stack, by design: a fallback signing key is a fallback
+      # that reaches production. The container refuses to start without it.
+      NOVELTEA_JWT_SECRET: ${NOVELTEA_JWT_SECRET:?generate one with: openssl rand -base64 48}
+      # The first account. Leave the password unset and it is `admin`, which the server
+      # will not let you keep — see the README's "First run".
+      NOVELTEA_ADMIN_EMAIL: ${NOVELTEA_ADMIN_EMAIL:-admin@localhost}
+      NOVELTEA_ADMIN_PASSWORD: ${NOVELTEA_ADMIN_PASSWORD:-admin}
+      NOVELTEA_OPEN_REGISTRATION: ${NOVELTEA_OPEN_REGISTRATION:-false}
+      NOVELTEA_API_DOCS_ENABLED: ${NOVELTEA_API_DOCS_ENABLED:-false}
+      # Unset means reset links are written to the log instead of sent. Fine for one
+      # operator reading their own logs; not otherwise.
+      SPRING_MAIL_HOST: ${SMTP_HOST:-}
+      SPRING_MAIL_PORT: ${SMTP_PORT:-587}
+      SPRING_MAIL_USERNAME: ${SMTP_USERNAME:-}
+      SPRING_MAIL_PASSWORD: ${SMTP_PASSWORD:-}
+      NOVELTEA_MAIL_FROM: ${NOVELTEA_MAIL_FROM:-noveltea@localhost}
+      NOVELTEA_APP_URL: ${NOVELTEA_APP_URL:-}
+    volumes:
+      # Both, and shared with the worker, because the split is by destination and not by
+      # who touches them: the worker writes an artifact to one or the other, and the API
+      # is what serves it back. One volume missing here is downloads that 410.
+      - exports:/var/lib/noveltea/exports
+      - staging:/var/lib/noveltea/staging
+
+  worker:
+    image: ghcr.io/ajcarlascio/noveltea-worker:${NOVELTEA_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # libpq form, not JDBC: this one is Node talking to Postgres directly.
+      NOVELTEA_DB_URL: postgresql://${POSTGRES_USER:-noveltea}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-noveltea}
+    volumes:
+      - exports:/var/lib/noveltea/exports
+      - staging:/var/lib/noveltea/staging
+
+  web:
+    image: ghcr.io/ajcarlascio/noveltea-web:${NOVELTEA_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      api:
+        # Waits for /health/ready, which touches the database — so the first page load
+        # cannot land on an API still running Liquibase.
+        condition: service_healthy
+    ports:
+      - "${NOVELTEA_PORT:-8080}:80"
+
+volumes:
+  # The only one holding anything irreplaceable. Exports regenerate; staging is transient
+  # by definition. Back this up: `docker compose exec -T postgres pg_dump -Fc -U noveltea
+  # noveltea > noveltea-$(date +%F).dump`
+  pgdata:
+  exports:
+  staging:

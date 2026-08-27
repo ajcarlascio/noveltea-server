@@ -2,6 +2,7 @@ package com.noveltea.auth;
 
 import com.noveltea.auth.AuthExceptions.EmailAlreadyRegistered;
 import com.noveltea.auth.AuthExceptions.InvalidCredentials;
+import com.noveltea.auth.AuthExceptions.RegistrationClosed;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -30,6 +31,7 @@ public class AuthService {
     private final JdbcClient jdbc;
     private final TokenService tokens;
     private final PasswordEncoder passwords;
+    private final AuthProperties properties;
 
     /**
      * A real hash, compared against when no account exists.
@@ -42,15 +44,25 @@ public class AuthService {
      */
     private final String dummyHash;
 
-    public AuthService(JdbcClient jdbc, TokenService tokens, PasswordEncoder passwords) {
+    public AuthService(
+            JdbcClient jdbc, TokenService tokens, PasswordEncoder passwords, AuthProperties properties) {
         this.jdbc = jdbc;
         this.tokens = tokens;
         this.passwords = passwords;
+        this.properties = properties;
         this.dummyHash = passwords.encode("password-for-an-account-that-does-not-exist");
     }
 
+    /**
+     * @param mustChangePassword the caller holds a password somebody else chose. The token
+     *     is real and works, but only against POST /api/v1/account/password.
+     */
     public record Session(
-            UUID userId, UUID deviceId, String accessToken, String refreshToken, long expiresInSeconds) {}
+            UUID userId, UUID deviceId, String accessToken, String refreshToken,
+            long expiresInSeconds, boolean mustChangePassword, boolean isAdmin) {}
+
+    /** The two account flags a client needs at sign-in, read together. */
+    private record Flags(boolean mustChangePassword, boolean isAdmin) {}
 
     public record DeviceInfo(
             UUID id, String name, String platform, OffsetDateTime createdAt,
@@ -58,10 +70,23 @@ public class AuthService {
 
     // ------------------------------------------------------------ registration
 
+    /**
+     * Makes an account for whoever asked.
+     *
+     * <p>Closed unless {@code noveltea.auth.open-registration} says otherwise. A NovelTea
+     * instance is somebody's own server, and the default that suits it is the opposite of
+     * the one that suits a hosted service: an address on the open internet where anyone
+     * passing can mint an account is a mail relay waiting to happen, not a feature. An
+     * administrator makes accounts instead — see {@code AdminService#createUser}, which
+     * does not come through here.
+     */
     @Transactional
     public Session register(String email, String password, String deviceName, String platform) {
+        if (!properties.openRegistration()) {
+            throw new RegistrationClosed();
+        }
         requireText(email, "email");
-        requirePassword(password);
+        Passwords.require(password);
         UUID userId = UUID.randomUUID();
         try {
             jdbc.sql("INSERT INTO app_user (id, email, password_hash) VALUES (:id, :email, :hash)")
@@ -99,6 +124,34 @@ public class AuthService {
             throw new InvalidCredentials(GENERIC_FAILURE);
         }
         return createDeviceSession((UUID) user.get("id"), deviceName, platform);
+    }
+
+    // ------------------------------------------------------------- password
+
+    /**
+     * A fresh token pair for a device that is already trusted.
+     *
+     * <p>Exists for one caller: changing your own password. Nothing about the device has
+     * changed, but the access token in the caller's hand still carries the claim saying it
+     * may do nothing but this, so it has to be replaced rather than merely tolerated.
+     */
+    @Transactional
+    public Session reissueSession(UUID userId, UUID deviceId) {
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(deviceId, "deviceId");
+        Boolean live = jdbc
+                .sql("SELECT true FROM device WHERE id = :id AND user_id = :userId AND revoked_at IS NULL")
+                .param("id", deviceId)
+                .param("userId", userId)
+                .query(Boolean.class)
+                .optional()
+                .orElse(null);
+        if (live == null) {
+            throw new InvalidCredentials(GENERIC_FAILURE);
+        }
+        String refreshToken = tokens.generateRefreshToken();
+        storeRefreshToken(deviceId, refreshToken);
+        return session(userId, deviceId, refreshToken, flags(userId));
     }
 
     // --------------------------------------------------------------- pairing
@@ -187,8 +240,7 @@ public class AuthService {
         String rotated = tokens.generateRefreshToken();
         storeRefreshToken(deviceId, rotated);
 
-        return new Session(userId, deviceId, tokens.issueAccessToken(userId, deviceId), rotated,
-                tokens.accessTokenTtl().toSeconds());
+        return session(userId, deviceId, rotated, flags(userId));
     }
 
     // --------------------------------------------------------------- devices
@@ -257,8 +309,33 @@ public class AuthService {
 
         String refreshToken = tokens.generateRefreshToken();
         storeRefreshToken(deviceId, refreshToken);
-        return new Session(userId, deviceId, tokens.issueAccessToken(userId, deviceId), refreshToken,
-                tokens.accessTokenTtl().toSeconds());
+        // Read here rather than passed in by each caller: register, login and pair all
+        // reach this line, and a caller that forgot the argument would mint a token with
+        // the lock quietly missing.
+        return session(userId, deviceId, refreshToken, flags(userId));
+    }
+
+    private Session session(UUID userId, UUID deviceId, String refreshToken, Flags flags) {
+        return new Session(
+                userId,
+                deviceId,
+                // Only the lock goes into the token. Being an administrator is not a claim
+                // the API ever reads from one: AdminService asks the database every time,
+                // so revoking it takes effect at once rather than in fifteen minutes.
+                tokens.issueAccessToken(userId, deviceId, flags.mustChangePassword()),
+                refreshToken,
+                tokens.accessTokenTtl().toSeconds(),
+                flags.mustChangePassword(),
+                flags.isAdmin());
+    }
+
+    private Flags flags(UUID userId) {
+        return jdbc
+                .sql("SELECT must_change_password, is_admin FROM app_user WHERE id = :id")
+                .param("id", userId)
+                .query((rs, n) -> new Flags(rs.getBoolean(1), rs.getBoolean(2)))
+                .optional()
+                .orElse(new Flags(false, false));
     }
 
     private void storeRefreshToken(UUID deviceId, String refreshToken) {
@@ -296,9 +373,4 @@ public class AuthService {
         }
     }
 
-    private static void requirePassword(String password) {
-        if (password == null || password.length() < 12) {
-            throw new IllegalArgumentException("password must be at least 12 characters");
-        }
-    }
 }

@@ -23,6 +23,48 @@ npm install && npm start -w @noveltea/worker           # compile worker
 
 Health: `GET /health` (liveness) and `GET /health/ready` (touches the database).
 
+### First run
+
+A fresh instance creates one account so there is somebody to sign in as:
+
+| | |
+|---|---|
+| Email | `admin@localhost` — override with `NOVELTEA_ADMIN_EMAIL` |
+| Password | `admin` — override with `NOVELTEA_ADMIN_PASSWORD` |
+
+**That password cannot be kept.** Anything shorter than the twelve-character minimum —
+the built-in `admin` included — sets `must_change_password`, and until the account chooses
+its own, every route except `POST /api/v1/account/password` answers `403
+password_change_required`. Set `NOVELTEA_ADMIN_PASSWORD` to something real before first
+start and there is nothing to change; leave it and the server makes you change it.
+
+The account is created **only when the instance has no administrator at all**. A restart
+never rewrites a password anyone has since chosen, so a container in a crash loop cannot
+re-lock the account. On an instance that predates this feature and therefore has accounts
+but no administrator, the account matching `NOVELTEA_ADMIN_EMAIL` is promoted — its
+password untouched — rather than whichever account happens to be oldest.
+
+**Self-registration is off** (`NOVELTEA_OPEN_REGISTRATION`, default `false`). An address on
+the open internet where anyone passing can mint an account is not a feature of somebody's
+own server. Accounts come from an administrator instead:
+
+```bash
+curl -X POST https://write.example.com/api/v1/admin/users \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"email":"someone@example.com","displayName":"Someone"}'
+# -> {"id":"...","email":"someone@example.com","password":"Qh4k-mR7p-..."}
+```
+
+The password comes back once — only its hash is stored — and the new account has to replace
+it on first sign-in, because the admin knows it. `GET /api/v1/admin/users` lists accounts;
+`POST /api/v1/admin/users/{userId}/password` sets one for somebody locked out, which is the
+recovery path on an instance with no `spring.mail.host`, where the emailed reset would write
+its link to a log the account holder cannot read.
+
+Being an administrator grants **no access to anyone's projects or documents**. It is
+unrelated to `project_member.role`: that decides who may read a manuscript, and it has never
+heard of this flag.
+
 ```bash
 ./gradlew :api:test        # Java suite — real Postgres, in an isolated schema
 npm test                   # every Node workspace
@@ -39,6 +81,58 @@ npm test                   # every Node workspace
 | `NOVELTEA_EXPORT_PATH` | Where `server` exports land — mount a volume here. Never purged. |
 | `NOVELTEA_STAGING_PATH` | Where `download` exports wait. Purged after their TTL; container-local scratch is fine. |
 | `NOVELTEA_API_DOCS_ENABLED` | Off by default. Set `true` to serve the live spec and Swagger UI — see below. |
+| `NOVELTEA_ADMIN_EMAIL` / `NOVELTEA_ADMIN_PASSWORD` | The first account, created only when the instance has no administrator. Defaults `admin@localhost` / `admin`, and a password under twelve characters must be changed before the account can do anything. |
+| `NOVELTEA_ADMIN_ENABLED` | `false` skips the first-run account entirely, for an operator provisioning accounts some other way. An instance with no administrator cannot create users through the API. |
+| `NOVELTEA_OPEN_REGISTRATION` | `false` by default: accounts come from an administrator, not from whoever can reach the address. `true` reopens `POST /api/v1/auth/register`. |
+
+---
+
+## Running it with Docker
+
+Four containers: Postgres, the API, the compile worker, and a web server holding the
+browser client. Images are published to GHCR on every push to `main`.
+
+```bash
+curl -O https://raw.githubusercontent.com/ajcarlascio/noveltea-server/main/deploy/docker-compose.yml
+curl -o .env https://raw.githubusercontent.com/ajcarlascio/noveltea-server/main/deploy/.env.example
+# fill in NOVELTEA_JWT_SECRET and POSTGRES_PASSWORD; both refuse to default
+docker compose up -d
+```
+
+Then open `http://localhost:8080` and sign in with `admin@localhost` / `admin` — which the
+server will immediately make you replace. See **First run** above.
+
+| Image | |
+|---|---|
+| `ghcr.io/ajcarlascio/noveltea-api` | Spring Boot API. Runs Liquibase at startup, so there is no separate migration step. |
+| `ghcr.io/ajcarlascio/noveltea-worker` | Compile worker. |
+| `ghcr.io/ajcarlascio/noveltea-web` | The browser client, from the `noveltea` repository. |
+
+`latest` follows `main`; a `v*` tag publishes that version too. Pin `NOVELTEA_VERSION` in
+`.env` once the instance is one you rely on.
+
+**The client is served from the same origin as the API**, with `/api` and `/health` proxied
+through the web container. That is what lets `noveltea.cors.allowed-origins` stay empty, and
+an empty allow-list means no other origin can drive the browser client. Splitting them
+across two hostnames works, but then the client's origin has to be listed.
+
+**Three volumes, and only one of them matters.** `pgdata` holds every novel on the instance;
+`exports` and `staging` hold compile artifacts, which regenerate. Back up the database:
+
+```bash
+docker compose exec -T postgres pg_dump -Fc -U noveltea noveltea > noveltea-$(date +%F).dump
+```
+
+Postgres publishes no port. Nothing outside the compose network connects to it, and putting
+the one container that holds the writing onto the host network buys nothing.
+
+Building the images yourself, from the repository root — both need it, because the Gradle
+build is multi-project and the worker resolves `packages/compile` through an npm workspace:
+
+```bash
+docker build -f api/Dockerfile    -t noveltea-api    .
+docker build -f worker/Dockerfile -t noveltea-worker .
+```
 
 ---
 

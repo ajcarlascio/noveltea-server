@@ -1,6 +1,8 @@
 package com.noveltea.account;
 
 import com.noveltea.account.AccountService.DeletionStatus;
+import com.noveltea.account.AccountService.PasswordChange;
+import com.noveltea.auth.AuthService.Session;
 import com.noveltea.auth.CurrentUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -12,7 +14,8 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1")
-@Tag(name = "Account", description = "Password reset and account deletion.")
+@Tag(name = "Account", description = "Changing your own password, password reset, and "
+        + "account deletion.")
 public class AccountController {
 
     private final AccountService account;
@@ -26,6 +29,48 @@ public class AccountController {
     public record ResetConfirmRequest(String token, String newPassword) {}
 
     public record DeleteAccountRequest(String password) {}
+
+    public record ChangePasswordRequest(String currentPassword, String newPassword) {}
+
+    /**
+     * The same shape login returns, plus what the change did.
+     *
+     * <p>Carrying a session back matters: the caller's access token was minted before the
+     * change and, for an account that was being held at the door, still says so. A client
+     * that kept using it would change its password successfully and then be refused
+     * everywhere, which reads as the change having failed.
+     */
+    public record ChangePasswordResponse(
+            java.util.UUID userId,
+            java.util.UUID deviceId,
+            String accessToken,
+            String refreshToken,
+            long expiresIn,
+            boolean mustChangePassword,
+            boolean isAdmin,
+            int devicesSignedOut) {
+        static ChangePasswordResponse of(PasswordChange change) {
+            Session s = change.session();
+            return new ChangePasswordResponse(
+                    s.userId(), s.deviceId(), s.accessToken(), s.refreshToken(),
+                    s.expiresInSeconds(), s.mustChangePassword(), s.isAdmin(),
+                    change.devicesSignedOut());
+        }
+    }
+
+    @Operation(
+            summary = "Change your own password",
+            description = "Requires the current password. Signs out every OTHER device and "
+                    + "returns a replacement token pair for this one, because the access "
+                    + "token used to make the request predates the change. This is the only "
+                    + "route an account required to change its password may reach — every "
+                    + "other answers 403 password_change_required until it has.")
+    @PostMapping("/account/password")
+    public ChangePasswordResponse changePassword(
+            @AuthenticationPrincipal CurrentUser user, @RequestBody ChangePasswordRequest request) {
+        return ChangePasswordResponse.of(account.changePassword(
+                user.userId(), user.deviceId(), request.currentPassword(), request.newPassword()));
+    }
 
     /**
      * Always 202, whether or not the address is registered.

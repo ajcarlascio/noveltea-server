@@ -1,8 +1,10 @@
 package com.noveltea.config;
 
 import com.noveltea.auth.JwtAuthenticationFilter;
+import com.noveltea.auth.PasswordChangeRequiredFilter;
 import com.noveltea.web.RestAuthEntryPoints;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -25,7 +27,8 @@ public class SecurityConfig {
      */
     @Bean
     public SecurityFilterChain filterChain(
-            HttpSecurity http, JwtAuthenticationFilter jwtFilter, RestAuthEntryPoints entryPoints,
+            HttpSecurity http, JwtAuthenticationFilter jwtFilter,
+            PasswordChangeRequiredFilter passwordChangeFilter, RestAuthEntryPoints entryPoints,
             CorsProperties corsProperties)
             throws Exception {
         return http.csrf(csrf -> csrf.disable())
@@ -55,7 +58,32 @@ public class SecurityConfig {
                         .authenticationEntryPoint(entryPoints.unauthenticated())
                         .accessDeniedHandler(entryPoints.forbidden()))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+                // After the principal exists and before any handler runs, so an account
+                // holding a password somebody else chose cannot reach a route at all.
+                .addFilterAfter(passwordChangeFilter, JwtAuthenticationFilter.class)
                 .build();
+    }
+
+    /**
+     * Keeps the servlet container from registering the lock a second time.
+     *
+     * <p>Spring Boot registers every {@code Filter} bean with the container automatically,
+     * so a filter meant for the security chain ends up in two places: once where it was
+     * put, and once at the end of the servlet chain where it was not. {@code
+     * OncePerRequestFilter} hides that — the first copy to run marks the request and the
+     * second skips — which is exactly the problem: deleting the {@code addFilterAfter}
+     * line above changes nothing observable, so nothing stops a later refactor from moving
+     * this out of the chain and leaving it to run somewhere its principal may already have
+     * been cleared. Disabling the automatic registration makes that line the only one, and
+     * removing it a change that fails a test.
+     */
+    @Bean
+    public FilterRegistrationBean<PasswordChangeRequiredFilter> passwordChangeFilterStaysInTheChain(
+            PasswordChangeRequiredFilter filter) {
+        FilterRegistrationBean<PasswordChangeRequiredFilter> registration =
+                new FilterRegistrationBean<>(filter);
+        registration.setEnabled(false);
+        return registration;
     }
 
     /**
