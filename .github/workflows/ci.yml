@@ -1,0 +1,56 @@
+# The tests, on every pull request. Until this existed the only workflow here was the
+# image publish, which runs after a merge — so nothing checked a change before it landed,
+# and the Java suite in particular had never run anywhere but a developer's machine.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to the same branch makes the first one irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node packages and worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the engines field every workspace declares. The tests run TypeScript
+          # through node --test with no build step, which needs a recent Node.
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # client-db, compile and the worker. `--if-present` in the root script means a
+      # workspace without tests is skipped rather than failing the run.
+      - name: Test
+        run: npm test
+
+  java:
+    name: API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # The toolchain build.gradle.kts pins. Setting it here as well means the runner
+          # does not spend a minute provisioning one on every run.
+          java-version: "21"
+          cache: gradle
+
+      # Testcontainers starts a real Postgres, which is the whole point: the schema, the
+      # constraints and the triggers are what these tests are about, and none of them
+      # exist in a mock. The runner has Docker, so this needs no service container and no
+      # health-check dance.
+      - name: Test
+        run: ./gradlew test --console=plain --no-daemon
