@@ -1,6 +1,6 @@
 # The tests, on every pull request. Until this existed the only workflow here was the
 # image publish, which runs after a merge — so nothing checked a change before it landed,
-# and the Java suite in particular had never run anywhere but a developer's machine.
+# and the Java suite had never run anywhere but a developer's machine.
 name: CI
 
 on:
@@ -8,7 +8,6 @@ on:
   push:
     branches: [main]
 
-# A second push to the same branch makes the first one irrelevant.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -17,40 +16,76 @@ jobs:
   node:
     name: Node packages and worker
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: noveltea
+          POSTGRES_USER: noveltea
+          POSTGRES_PASSWORD: noveltea
+        ports: ["5432:5432"]
+        # Without this the job races the database and fails on a connection refused
+        # that looks like a test failure.
+        options: >-
+          --health-cmd "pg_isready -U noveltea -d noveltea"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          # Matches the engines field every workspace declares. The tests run TypeScript
-          # through node --test with no build step, which needs a recent Node.
           node-version: 22
           cache: npm
 
+      # The worker's queue tests drive a real database — they insert a job, drain the
+      # queue and read the artefact off disk, because the parts most likely to be wrong
+      # are exactly the ones a stub would replace. So the schema has to exist first.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      # `:api:update`, never a standalone liquibase CLI. CLAUDE.md explains why: a CLI on
+      # a different major writes DATABASECHANGELOG checksums the application runtime then
+      # rejects, and recovering means hand-editing a live table.
+      - name: Apply migrations
+        run: ./gradlew :api:update --console=plain --no-daemon
+
       - run: npm ci
 
-      # client-db, compile and the worker. `--if-present` in the root script means a
-      # workspace without tests is skipped rather than failing the run.
       - name: Test
         run: npm test
 
   java:
     name: API
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: noveltea
+          POSTGRES_USER: noveltea
+          POSTGRES_PASSWORD: noveltea
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U noveltea -d noveltea"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          # The toolchain build.gradle.kts pins. Setting it here as well means the runner
-          # does not spend a minute provisioning one on every run.
           java-version: "21"
           cache: gradle
 
-      # Testcontainers starts a real Postgres, which is the whole point: the schema, the
-      # constraints and the triggers are what these tests are about, and none of them
-      # exist in a mock. The runner has Docker, so this needs no service container and no
-      # health-check dance.
+      # AbstractPostgresTest builds its own isolated schema and Spring applies Liquibase
+      # at boot, so this needs the server and nothing more. It defaults to
+      # localhost:5432 with noveltea/noveltea, which is what the service above is.
       - name: Test
         run: ./gradlew test --console=plain --no-daemon
