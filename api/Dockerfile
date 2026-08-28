@@ -12,7 +12,12 @@
 # its own spec. That is exactly right on a developer's machine and impossible inside an
 # image build, where there is no database to boot against.
 
-FROM eclipse-temurin:21-jdk AS build
+# Pinned to the BUILD platform, not the target. This stage produces a JAR, which is the
+# same bytes on every architecture — so building it once natively is not an optimisation.
+# The multi-arch publish emulates its arm64 leg with QEMU, and a JVM running Gradle under
+# emulation is slow at best; the client repository lost a push to main to exactly this,
+# with V8 rather than the JVM. The runtime stage below stays on the target platform.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS build
 WORKDIR /src
 
 # Build definitions before sources, so editing a Java file does not re-resolve every
