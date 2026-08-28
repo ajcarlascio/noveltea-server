@@ -49,3 +49,20 @@ packages/*/src/generated/
 # Private commercial roadmap — never commit
 PAID-FEATURES.local.md
 *.private.md
+
+# Coding-agent instructions — local only, deliberately.
+#
+# CLAUDE.md, AGENTS.md and .claude/ are how *this machine* drives an agent over the
+# repository. They are not product documentation: the architecture and the invariants
+# moved to docs/architecture.md, which is where a human or an external auditor looks.
+#
+# Untracked with `git rm --cached`, so the files survive on disk and only leave the
+# remote. They remain in the repository's *history*; this stops them going forward.
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.claude/
+.cursor/
+.cursorrules
+.aider*
+.github/copilot-instructions.md

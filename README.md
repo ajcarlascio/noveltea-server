@@ -183,8 +183,8 @@ docs/design/            The original data model and API sketch, with amendments
 docs/api/               Generated OpenAPI spec (openapi.yaml) — see "API documentation" above
 ```
 
-`CLAUDE.md` documents the architecture and the invariants the code is expected to hold; it
-is the authority where it and the design doc disagree.
+`docs/architecture.md` documents the architecture and the invariants the code is expected
+to hold; it is the authority where it and the design doc disagree.
 
 ---
 

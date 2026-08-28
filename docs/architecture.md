@@ -1,6 +1,8 @@
-# CLAUDE.md
+# Architecture
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+How the server is built and the invariants the code is expected to hold. Where this file
+and `docs/design/v1-data-model-api.md` disagree, this file wins — the design doc records
+what was planned, this one records what was built.
 
 ## Project status
 
@@ -116,11 +118,11 @@ These tables live in **Core** migrations even though no Core code writes to them
   ./gradlew :api:dependencies --configuration runtimeClasspath  | grep liquibase-core
   ```
   Those two must print the same version. If they ever diverge, fix that before running any migration.
-- **Tests run against Testcontainers Postgres, never H2.** The `tx_id` / `pg_snapshot_xmin` visibility gate and the concurrent-commit ordering case both depend on real Postgres MVCC semantics and cannot be reproduced on an in-memory database.
+- **Tests run against a real Postgres, never H2.** The `tx_id` / `pg_snapshot_xmin` visibility gate and the concurrent-commit ordering case both depend on real Postgres MVCC semantics and cannot be reproduced on an in-memory database. `AbstractPostgresTest` connects to `localhost:5432` as `noveltea`/`noveltea` and builds an isolated `noveltea_test` schema; override with `NOVELTEA_TEST_JDBC_URL`, `NOVELTEA_TEST_DB_USER` and `NOVELTEA_TEST_DB_PASSWORD`. **This is not Testcontainers** — nothing starts a database for you, so `docker compose up -d` comes first or every test in the suite fails at class initialisation.
 
 ## Commands
 
-The Gradle wrapper jar is not committed yet — run `gradle wrapper --gradle-version 8.10` once (needs a local Gradle) to generate `gradlew`, or substitute `gradle` for `./gradlew` below.
+The Gradle wrapper is committed; `./gradlew` provisions its own JDK and Gradle.
 
 ```bash
 docker compose up -d             # local Postgres 18

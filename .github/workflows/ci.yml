@@ -48,7 +48,7 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      # `:api:update`, never a standalone liquibase CLI. CLAUDE.md explains why: a CLI on
+      # `:api:update`, never a standalone liquibase CLI. docs/architecture.md explains why: a CLI on
       # a different major writes DATABASECHANGELOG checksums the application runtime then
       # rejects, and recovering means hand-editing a live table.
       - name: Apply migrations

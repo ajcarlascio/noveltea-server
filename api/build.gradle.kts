@@ -71,7 +71,7 @@ liquibase {
 //
 // The forked app needs a JWT secret that passes AuthProperties' minimum-length check
 // (TokenService requires >=32 decoded bytes; startup has no fallback, by design — see
-// CLAUDE.md) and its own port so it never collides with a developer's `bootRun` on 8080.
+// docs/architecture.md) and its own port so it never collides with a developer's `bootRun` on 8080.
 // Neither value is sensitive: this process only ever answers its own scrape request on
 // localhost and is torn down immediately after.
 val openApiDocGenPort = 8099
@@ -81,7 +81,7 @@ openApi {
     apiDocsUrl.set("http://localhost:$openApiDocGenPort/v3/api-docs.yaml")
     outputDir.set(file("$rootDir/docs/api"))
     outputFileName.set("openapi.yaml")
-    // Liquibase alone adds ~10s to startup (see CLAUDE.md); leave headroom.
+    // Liquibase alone adds ~10s to startup (see docs/architecture.md); leave headroom.
     waitTimeInSeconds.set(60)
     customBootRun {
         args.set(listOf("--server.port=$openApiDocGenPort"))
