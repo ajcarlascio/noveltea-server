@@ -25,7 +25,7 @@ public class ProjectController {
         this.access = access;
     }
 
-    public record CreateProjectRequest(String title, JsonNode settings) {}
+    public record CreateProjectRequest(UUID id, String title, JsonNode settings) {}
 
     /** Null fields mean "leave unchanged" — a partial update must not blank a title. */
     public record UpdateProjectRequest(String title, JsonNode settings) {}
@@ -44,7 +44,7 @@ public class ProjectController {
     @ResponseStatus(HttpStatus.CREATED)
     public Project create(
             @AuthenticationPrincipal CurrentUser user, @RequestBody CreateProjectRequest request) {
-        return projects.create(user.userId(), request.title(), request.settings());
+        return projects.create(user.userId(), request.id(), request.title(), request.settings());
     }
 
     @Operation(

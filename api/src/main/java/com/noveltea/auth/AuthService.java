@@ -5,6 +5,8 @@ import com.noveltea.auth.AuthExceptions.InvalidCredentials;
 import com.noveltea.auth.AuthExceptions.RegistrationClosed;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import com.noveltea.model.DevicePlatform;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -26,7 +28,19 @@ import org.springframework.transaction.annotation.Transactional;
 public class AuthService {
 
     private static final String GENERIC_FAILURE = "invalid credentials";
-    private static final List<String> PLATFORMS = List.of("web", "windows", "macos", "ios");
+    /**
+     * What a client may call itself.
+     *
+     * Derived from {@link DevicePlatform} rather than written out again. It used to be a
+     * third hand-maintained copy of a list that also lives in the enum and in the CHECK
+     * on device.platform, and it had already drifted from both — it held "windows" and
+     * "macos" while the client only ever sent "tauri" and "android", so every desktop
+     * and Android sign-in fell through to "web" and the device list called an author's
+     * laptop a browser. EnumSchemaAlignmentTest pins the enum to the constraint; this
+     * makes that one test cover this too.
+     */
+    private static final List<String> PLATFORMS =
+            Arrays.stream(DevicePlatform.values()).map(DevicePlatform::wire).toList();
 
     private final JdbcClient jdbc;
     private final TokenService tokens;
@@ -295,7 +309,13 @@ public class AuthService {
     // -------------------------------------------------------------- internals
 
     private Session createDeviceSession(UUID userId, String deviceName, String platform) {
-        String resolvedPlatform = PLATFORMS.contains(platform) ? platform : "web";
+        // The null check is not redundant. PLATFORMS is a List.of(), and the immutable
+        // lists reject a null probe with a NullPointerException rather than answering
+        // false — so a login that simply omitted "platform" returned a 500 from an
+        // unauthenticated endpoint. The line below it has handled a null deviceName
+        // since the beginning; this one was written as though the field were required.
+        String resolvedPlatform =
+                platform != null && PLATFORMS.contains(platform) ? platform : "web";
         UUID deviceId = UUID.randomUUID();
         jdbc.sql("""
                 INSERT INTO device (id, user_id, name, platform, last_seen_at)

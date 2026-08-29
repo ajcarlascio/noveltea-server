@@ -107,6 +107,50 @@ class AuthServiceTest extends AbstractPostgresTest {
         assertThat(auth.listDevices(first.userId(), first.deviceId())).hasSize(2);
     }
 
+    @Test
+    @DisplayName("a login that omits its platform is not a 500")
+    void loginWithoutPlatformSucceeds() {
+        // PLATFORMS is a List.of(), and the immutable lists throw on a null probe rather
+        // than answering false. So `PLATFORMS.contains(null)` was a NullPointerException
+        // on an unauthenticated endpoint: any client that left the field out — anything
+        // that was not our own web app — got "internal error" and could not sign in at
+        // all. It was found by curling the running stack, not by any test here.
+        String email = email();
+        auth.register(email, PASSWORD, "Laptop", "web");
+
+        Session session = auth.login(email, PASSWORD, "Something", null);
+
+        assertThat(session.userId()).isNotNull();
+        assertThat(devicePlatform(session.deviceId()))
+                .as("an unknown platform falls back to web rather than failing")
+                .isEqualTo("web");
+    }
+
+    @Test
+    @DisplayName("the platforms the client actually sends are stored, not rewritten to web")
+    void clientPlatformsAreAccepted() {
+        // The client's Platform union is "web" | "tauri" | "ios" | "android", and this
+        // list held "windows" and "macos" instead. The two overlapped on web and ios, so
+        // every desktop and every Android sign-in was recorded as a browser — in the one
+        // list whose whole purpose is telling an author's laptop from their phone.
+        String email = email();
+        auth.register(email, PASSWORD, "Laptop", "web");
+
+        for (String platform : new String[] {"tauri", "android", "ios", "linux"}) {
+            Session session = auth.login(email, PASSWORD, "Device", platform);
+            assertThat(devicePlatform(session.deviceId()))
+                    .as("%s must survive the round trip", platform)
+                    .isEqualTo(platform);
+        }
+    }
+
+    private String devicePlatform(UUID deviceId) {
+        return jdbc.sql("SELECT platform FROM device WHERE id = :id")
+                .param("id", deviceId)
+                .query(String.class)
+                .single();
+    }
+
     // -------------------------------------------------------------- rotation
 
     @Test

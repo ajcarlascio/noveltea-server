@@ -17,7 +17,11 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - noveltea-pgdata:/var/lib/postgresql/data
+      # /var/lib/postgresql, not data/ inside it. The 18 image stores the cluster in a
+      # version-named subdirectory and refuses to start when the mount lands on data/ —
+      # the container restart-loops, and every Java test then fails at class
+      # initialisation with "Cannot prepare test schema", which looks like a code fault.
+      - noveltea-pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U noveltea -d noveltea"]
       interval: 5s
