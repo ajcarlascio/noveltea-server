@@ -34,11 +34,36 @@ public class ProjectService {
 
     @Transactional
     public Project create(UUID ownerId, String title, JsonNode settings) {
+        return create(ownerId, null, title, settings);
+    }
+
+    @Transactional
+    public Project create(UUID ownerId, UUID clientId, String title, JsonNode settings) {
         Objects.requireNonNull(ownerId, "ownerId");
         String cleanTitle = requireTitle(title);
         String cleanSettings = normaliseSettings(settings);
 
-        UUID id = UUID.randomUUID();
+        // A client that already has a local project supplies its own id so sync can
+        // address it afterwards. Idempotent: if the same owner sends the same id twice
+        // (a retry after a lost response), the existing project is returned unchanged.
+        // A different owner naming the same id gets a fresh one — telling them the id
+        // is taken would confirm it exists.
+        UUID id = clientId != null ? clientId : UUID.randomUUID();
+
+        if (clientId != null) {
+            var existing = jdbc.sql("SELECT owner_id FROM project WHERE id = :id")
+                    .param("id", id).query().listOfRows();
+            if (!existing.isEmpty()) {
+                UUID existingOwner = (UUID) existing.getFirst().get("owner_id");
+                if (existingOwner.equals(ownerId)) {
+                    return get(id, true);
+                }
+                // Collision with another owner: fall through with a fresh id so the
+                // caller gets a working project instead of an error.
+                id = UUID.randomUUID();
+            }
+        }
+
         jdbc.sql("""
                 INSERT INTO project (id, owner_id, title, settings)
                 VALUES (:id, :ownerId, :title, CAST(:settings AS jsonb))

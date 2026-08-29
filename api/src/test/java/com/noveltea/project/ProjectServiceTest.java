@@ -282,4 +282,40 @@ class ProjectServiceTest extends AbstractPostgresTest {
         projects.delete(project.id());
         assertThat(projects.listDeleted(me.userId())).hasSize(1);
     }
+
+    // ------------------------------------------------------- client-supplied id
+
+    @Test
+    @DisplayName("a client-supplied id is used as the project's primary key")
+    void clientSuppliedIdIsAccepted() {
+        Session me = someone();
+        UUID clientId = UUID.randomUUID();
+        Project project = projects.create(me.userId(), clientId, "My Novel", null);
+        assertThat(project.id()).isEqualTo(clientId);
+    }
+
+    @Test
+    @DisplayName("creating with the same client id twice is idempotent for the same owner")
+    void duplicateClientIdIsIdempotent() {
+        Session me = someone();
+        UUID clientId = UUID.randomUUID();
+        Project first = projects.create(me.userId(), clientId, "Novel", null);
+        Project second = projects.create(me.userId(), clientId, "Different Title", null);
+        assertThat(second.id()).isEqualTo(first.id());
+        assertThat(second.title()).as("the existing row is returned, not overwritten")
+                .isEqualTo("Novel");
+    }
+
+    @Test
+    @DisplayName("a different owner naming the same client id gets a fresh project")
+    void clientIdCollisionAcrossOwners() {
+        Session owner = someone();
+        Session stranger = someone();
+        UUID clientId = UUID.randomUUID();
+        projects.create(owner.userId(), clientId, "Owner's Novel", null);
+        Project strangers = projects.create(stranger.userId(), clientId, "Stranger's Novel", null);
+        assertThat(strangers.id()).as("must not reuse the other owner's id")
+                .isNotEqualTo(clientId);
+        assertThat(strangers.title()).isEqualTo("Stranger's Novel");
+    }
 }
