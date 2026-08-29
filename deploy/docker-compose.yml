@@ -24,7 +24,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-noveltea}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # The whole directory, not data/ inside it. Postgres 18's image stores the cluster
+      # in a version-named subdirectory so that pg_upgrade --link can work across a
+      # single mount point, and it refuses to start when the mount lands on data/
+      # instead — the container restart-loops and the stack never comes up. Mounting
+      # data/ is what every pre-18 compose file did, which is why this needs saying.
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-noveltea} -d $${POSTGRES_DB:-noveltea}"]
       interval: 5s
@@ -47,7 +52,11 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       # No default anywhere in the stack, by design: a fallback signing key is a fallback
       # that reaches production. The container refuses to start without it.
-      NOVELTEA_JWT_SECRET: ${NOVELTEA_JWT_SECRET:?generate one with: openssl rand -base64 48}
+      # Quoted, and it has to be: the ": " inside the message reads as a mapping
+      # separator, and the whole file stops parsing. Compose reports it as a scanner
+      # error, which is not where anyone looks for a missing quote — and it means
+      # `docker compose up`, the first instruction in the README, has never worked.
+      NOVELTEA_JWT_SECRET: "${NOVELTEA_JWT_SECRET:?generate one with: openssl rand -base64 48}"
       # The first account. Leave the password unset and it is `admin`, which the server
       # will not let you keep — see the README's "First run".
       NOVELTEA_ADMIN_EMAIL: ${NOVELTEA_ADMIN_EMAIL:-admin@localhost}
