@@ -252,24 +252,24 @@ Honest status. None is fixed by pretending otherwise.
 | **Rate limiting is in-memory** | Limits apply *per instance*; behind two replicas an attacker gets double. Needs a shared store before scaling out. |
 | **`X-Forwarded-For` is trusted for rate limiting** | Spoofing the header evades the per-IP limit. It slows guessing; it is not the only defence. |
 | **Liquibase adds ~10s to startup** | Fixed overhead, not proportional to changeset count. Migrations could move to a deploy step instead. |
-| **`maxPushBatchSize` is unenforced** | A push batch is unbounded in row count. Enforcing it needs a client that knows how to split, so it is a protocol decision. |
-| **`RequestSizeLimitFilter` reads `Content-Length` only** | A chunked request has none and bypasses the 413 ceiling. |
 
 ### Correctness and coverage
 
 | Issue | Impact |
 |---|---|
 | **Restore and merge do not refresh `search_text`** | After restoring a snapshot, search still matches the discarded revision's words. Only clients can produce `search_text`, so it stays stale until that document is next edited. |
-| **`maxDocumentBytes` is unenforced on the document path** | It applies to spec-driven entities only; a single document can reach the 32MB request ceiling. |
-| **`maxTitleLength` is unused** | A binder title created through sync is unbounded. |
 | **Snapshot pruning can pick the wrong row** | `restore` captures the pre-restore state and prunes in one transaction, where `now()` is constant, so ties order arbitrarily. |
 | **Comment notification sends inside the transaction** | An unreachable SMTP server holds a write transaction open for the connect timeout. |
 
 ### Not built
 
-- **Sharing and visibility filtering.** `SharingProvider` is an extension point Core never
-  implements; the tables exist so a licence upgrade needs no migration. In a Core build the
-  owner is the only user, so comment notification is effectively unreachable.
+- **Sharing and visibility filtering.** The `project_member` and `project_invitation`
+  tables ship in Core migrations so a licence upgrade needs no migration, and
+  `project_member` is the one sync entity type that answers `not_implemented`. The
+  `SharingProvider` interface itself is **not written yet** — `/members` and
+  `/invitations` do not exist as routes, so they 404 rather than answering `501` the way
+  `ExportProvider`'s formats do. In a Core build the owner is the only user, so comment
+  notification is effectively unreachable.
 - **Commercial export formats** (`rtf`, `docx`, `odt`, `epub`, `pdf`) and cloud storage.
   Core refuses them with `501` rather than pretending they do not exist.
 

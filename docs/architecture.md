@@ -29,8 +29,16 @@ Extension points Core owns (and must keep working when nothing implements them):
 
 - `ExportProvider` — Core registers the always-free formats; the private repo registers the
   rest. Unimplemented formats return `501` with an upgrade pointer, never a stack trace.
-- `SharingProvider` — absent in Core. All `/members`, `/invitations` routes return `501`.
-  **Sync must work with no provider present**, taking the single-owner path.
+- `SharingProvider` — **not scaffolded yet.** Unlike `ExportProvider` and
+  `DestinationProvider`, which are real interfaces in `com.noveltea.compile`, no
+  `SharingProvider` type and no `/members` or `/invitations` controller exist: those
+  routes 404 today rather than answering `501`. What *is* in place is everything that
+  has to be right before they can be added — the `project_member` and
+  `project_invitation` tables ship in Core migrations, `ProjectAccess` is the single
+  place an authorization decision is made, and `project_member` is the one sync entity
+  type deliberately left `not_implemented`. **Sync works with no provider present**,
+  taking the single-owner path, which is the property that matters and is tested.
+  Writing the interface and the `501` routes is Core's job and is still to do.
 
 If a commercial feature needs new tables, the *migration still lands in Core*, so upgrading
 a licence never requires a schema migration against a live database. Core writes nothing to
@@ -443,10 +451,12 @@ Documents and binder items are deliberately not spec-driven: conflict copies and
 
 `GET|POST /api/v1/projects/{id}/sync` is implemented in `com.noveltea.sync.SyncService`. What is and is not true of it today:
 
-- **Writable entity types are `binder_item` and `document` only.** Everything else returns a per-change conflict with reason `not_implemented` rather than silently dropping fields. Add a case to the switch in `SyncService.applyOne`, or a `SyncEntitySpec` entry, when you add a type.
+- **Every entity type is writable except `project_member`.** Four have hand-written handlers in the `applyOne` switch — `document`, `binder_item`, `snapshot`, `comment` — and the rest go through `applyDataEntity` against their `SyncEntitySpec`: `taxonomy`, `custom_metadata_field`, `custom_metadata_value`, `collection`, `collection_item`, `compile_preset`. Only `project_member` returns a per-change conflict with reason `not_implemented`, and it does so deliberately: sharing is commercial, so Core has nothing to write there. Add a case to the switch, or a `SyncEntitySpec` entry, when you add a type — never a silent field drop.
 - **Auth is real now.** Every route under `/api/v1` needs a bearer access token except register, login, refresh and pair. The device is taken from the token's `did` claim, never from a header, so a client cannot attribute writes to another device. The pull feed still needs role/subtree visibility filtering, which arrives with the commercial `SharingProvider`.
-- **The conflict copy is the whole safety net.** A stale `document` write is never merged and never dropped: the server keeps its version, the client's text is stored as a titled sibling, and the response returns `conflictCopyId`. The client-side merge editor that reconciles the pair is not built yet — until it is, authors see two documents.
+- **The conflict copy is the whole safety net.** A stale `document` write is never merged and never dropped: the server keeps its version, the client's text is stored as a titled sibling, and the response returns `conflictCopyId`. The client reconciles the pair through the Conflicts endpoints (`com.noveltea.merge`).
 - **Tree writes are last-write-wins** by arrival. Document content never takes that path.
+- **A push is bounded before it is applied.** More than `maxPushBatchSize` changes in one request is refused whole with `413 push_batch_too_large`, the limit in the body so a client can split to it. Refusing partway through would be worse than not refusing: each change commits in its own transaction, so a client that resent an abandoned batch would turn every already-accepted change into a conflict copy.
+- **The hand-written paths carry the same bounds as the spec-driven ones.** `maxTitleLength` on `binder_item`, `maxDocumentBytes` on `document` content. `SyncEntityWriter` has always enforced these for spec-driven entities; documents and binder items are not spec-driven, so theirs are written out in `SyncService` and are reported as an ordinary per-change conflict rather than a failed batch.
 
 When changing any of this, run the mutation check: delete the `tx_id` predicate from the pull query, or make a conflict overwrite instead of copy, and confirm the suite goes red. Tests that cannot fail are not protecting anything.
 

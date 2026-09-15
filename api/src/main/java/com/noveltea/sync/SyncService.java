@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.noveltea.binder.BinderService;
 import com.noveltea.config.LimitProperties;
+import com.noveltea.config.Utf8;
 import com.noveltea.model.ChangeOp;
 import com.noveltea.model.EntityType;
 import com.noveltea.order.FractionalIndex;
@@ -257,6 +258,13 @@ public class SyncService {
     public PushResponse push(UUID projectId, UUID deviceId, List<ChangeRequest> changes) {
         Objects.requireNonNull(projectId, "projectId");
         List<ChangeRequest> safeChanges = changes == null ? List.of() : changes;
+        // Refused before the loop, not inside it. Every change is applied in its own
+        // transaction, so a batch abandoned partway has already committed some of itself —
+        // and the client, holding no `applied` list, resends the lot. Counting first is
+        // what keeps "too many" from costing an author a conflict copy per accepted change.
+        if (safeChanges.size() > limits.maxPushBatchSize()) {
+            throw new SyncExceptions.PushBatchTooLarge(limits.maxPushBatchSize(), safeChanges.size());
+        }
         List<AppliedChange> applied = new ArrayList<>();
         List<ConflictRecord> conflicts = new ArrayList<>();
 
@@ -712,6 +720,12 @@ public class SyncService {
         }
 
         String content = requiredJson(change, "content");
+        // Spec-driven entities have been size-checked in SyncEntityWriter since they were
+        // written; documents, being hand-written, never were. Without this the only
+        // ceiling on one document is the 32MB request limit — four times the configured
+        // bound, and it applies to the whole batch rather than to each document in it.
+        // A conflict copy of an oversized document would double it again.
+        requireContentWithinLimit(content);
 
         if (current.isEmpty()) {
             if ("create".equals(change.op())) {
@@ -834,6 +848,13 @@ public class SyncService {
             applied.add(new AppliedChange(change.entityId(), "binder_item", current.orElse(0L)));
             return;
         }
+
+        // Checked once, before either branch, because create and update read the title
+        // from the same payload and a guard on one of them is a guard on neither. The
+        // column is unconstrained `text`, so nothing below this line refuses a title of
+        // any length — and a title is echoed into the binder of every device on the
+        // project, so an absurd one is not merely this row's problem.
+        requireTitleWithinLimit(change);
 
         if (current.isEmpty()) {
             // An update for a row the server has never seen is treated as a create when
@@ -1043,7 +1064,36 @@ public class SyncService {
     private String conflictTitle(String original, UUID deviceId) {
         String stamp = OffsetDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
         String device = deviceId == null ? "unknown device" : deviceId.toString().substring(0, 8);
-        return original + " (Conflicted Copy, " + device + ", " + stamp + ")";
+        String suffix = " (Conflicted Copy, " + device + ", " + stamp + ")";
+        // The suffix is what tells an author which copy this is and where it came from, so
+        // the original is what gives way when the pair will not fit. Trimming the other end
+        // would produce a row of copies distinguishable only by their timestamps.
+        int room = limits.maxTitleLength() - suffix.length();
+        String kept = original.length() > room ? original.substring(0, Math.max(room, 0)) : original;
+        return kept + suffix;
+    }
+
+    /**
+     * Refuses a title above the configured bound, when the change carries one at all.
+     *
+     * <p>An {@link IllegalArgumentException} here becomes one reported conflict for this
+     * change rather than a 500 that fails the batch — see {@code push}. The message is
+     * ours, so it is safe to echo back.
+     */
+    private void requireTitleWithinLimit(ChangeRequest change) {
+        String title = optionalText(change, "title");
+        if (title != null && title.length() > limits.maxTitleLength()) {
+            throw new IllegalArgumentException(
+                    "title must be at most " + limits.maxTitleLength() + " characters");
+        }
+    }
+
+    /** Refuses document content above {@code maxDocumentBytes}, measured as UTF-8 bytes. */
+    private void requireContentWithinLimit(String content) {
+        if (Utf8.byteLength(content) > limits.maxDocumentBytes()) {
+            throw new IllegalArgumentException(
+                    "content must be at most " + limits.maxDocumentBytes() + " bytes");
+        }
     }
 
     // ------------------------------------------------------------- helpers

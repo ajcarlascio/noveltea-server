@@ -40,6 +40,12 @@ export function toMarkdown(doc: ProseMirrorNode | null | undefined): {
         case "em": text = `*${text}*`; break;
         case "code": text = `\`${node.text ?? ""}\``; break;
         case "strike": text = `~~${text}~~`; break;
+        // Markdown has no underline of its own, so it borrows HTML's — which every
+        // renderer that matters passes through. The alternative was silence: underline
+        // is a *known* mark, so `inspect()` raises no warning for it, and without a case
+        // here the formatting vanished from the export with nothing said about it. The
+        // inner text stays escaped; only the wrapper is raw.
+        case "underline": text = `<u>${text}</u>`; break;
         case "link": {
           // Markdown links execute in renderers too; same allowlist applies.
           const href = String(mark.attrs?.href ?? "");

@@ -1267,6 +1267,9 @@ components:
     CreateProjectRequest:
       type: object
       properties:
+        id:
+          type: string
+          format: uuid
         title:
           type: string
         settings:
