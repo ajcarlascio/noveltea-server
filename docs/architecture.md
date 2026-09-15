@@ -10,7 +10,7 @@ The backend is built and tested. The design of record is `docs/design/v1-data-mo
 
 ## What this is
 
-NovelTea is a self-hosted, offline-first long-form writing app built around a binder tree, document snapshots, labels and statuses, custom metadata, saved and smart collections, and compile presets. Clients are web, Tauri (Windows/macOS), and iOS. Every client keeps a full local replica and works fully disconnected.
+NovelTea is a self-hosted, offline-first long-form writing app built around a binder tree, document snapshots, labels and statuses, custom metadata, saved and smart collections, and compile presets. Clients are one web codebase, shipped as a browser app and wrapped by Tauri v2 for Windows, macOS, Linux, iOS and Android. Every client keeps a full local replica and works fully disconnected.
 
 Copyright Anthony Carlascio. This repo is the **open core** under Elastic License 2.0; commercial features live in a separate private repo (see Editions).
 
@@ -90,7 +90,13 @@ Dependencies must be permissively licensed (MIT/Apache-2.0/BSD). Copyleft is inc
 ## Data store
 
 - **Server: PostgreSQL.** The schema leans on `jsonb` + GIN (smart-collection filters; `tsvector` manuscript search), real enums, and sequence-backed sync cursors. MariaDB's `JSON` is a `LONGTEXT` alias and would need generated columns per path.
-- **Clients: SQLite** (GRDB on iOS, OPFS/wa-sqlite on web), defined once in `packages/client-db` and shared by every client. It is a *subset*, not a translation: no `change_log`, no server-owned tables, plus `sync_state` and `pending_change`. All tables are `STRICT`. **Read `packages/client-db/README.md` before touching it** — it documents every deliberate divergence from Postgres, and the two rules that cause silent data loss if broken (`PRAGMA foreign_keys` is per-connection; `pending_change` upserts must preserve `base_version`).
+- **Clients: SQLite** (`@sqlite.org/sqlite-wasm` over the OPFS SAH Pool VFS in a browser; the same
+  wasm build in memory under Tauri, with the whole database file read and written by Rust),
+  defined once in `packages/client-db` and shared by every client. Two names that used to appear
+  here and should not reappear: **wa-sqlite**, dropped because its npm package declares no licence
+  at all and this project takes MIT/Apache-2.0/BSD only, and **GRDB**, which went with the idea of a
+  separate native iOS store — Tauri reaches iOS from this same codebase, so there is no second store
+  to keep at parity. It is a *subset*, not a translation: no `change_log`, no server-owned tables, plus `sync_state` and `pending_change`. All tables are `STRICT`. **Read `packages/client-db/README.md` before touching it** — it documents every deliberate divergence from Postgres, and the two rules that cause silent data loss if broken (`PRAGMA foreign_keys` is per-connection; `pending_change` upserts must preserve `base_version`).
 - **Migrations: Liquibase with SQL-formatted changelogs, not XML.** The XML abstraction exists for cross-database portability we don't want; it fights `jsonb`, GIN, and partial indexes. Clients use plain numbered SQL migrations — no Liquibase on clients.
 
 ## Sync protocol — the core invariants
@@ -470,9 +476,37 @@ Documents and binder items are deliberately not spec-driven: conflict copies and
 
 When changing any of this, run the mutation check: delete the `tx_id` predicate from the pull query, or make a conflict overwrite instead of copy, and confirm the suite goes red. Tests that cannot fail are not protecting anything.
 
+## Settled since this list was written
+
+These were open questions. They are not any more, and leaving them listed as open sends
+somebody off to decide something already decided.
+
+1. **Compile job dispatch — settled, and proven.** Postgres `LISTEN/NOTIFY` on `compile_job`
+   works and needs no broker. `CompileService` calls `pg_notify` *inside* the submitting
+   transaction, so the worker cannot wake before the row it is being told about is visible;
+   the worker holds the `LISTEN` on a dedicated connection, because a pooled one gets
+   recycled and silently loses it. Claiming is `FOR UPDATE SKIP LOCKED`, so several workers
+   need no coordination and a crashed one blocks nobody. Polling remains the fallback for
+   anything missed, never the primary path.
+2. **Comments — built.** `comment` is a first-class `EntityType` with its own table, REST
+   controller, service and sync path, and threads are validated on both. What is still true
+   is narrower than the original note: the `commenter` *role* has nothing to write to,
+   because roles arrive with sharing, not because comments do not exist.
+3. **The client's local store — settled, and not GRDB.** The clients are one web codebase
+   wrapped by Tauri v2, iOS included, so there is no separate native store to keep at
+   parity. Persistence under Tauri is `sqlite-wasm` in memory plus two Rust commands that
+   read and write the whole database file atomically. Background sync scheduling on iOS is
+   the only part of this still open.
+
 ## Open questions
 
-1. Compile job dispatch between Spring and the worker — Postgres `LISTEN/NOTIFY` on a `compile_job` table avoids adding a broker, but is unproven here.
-2. Licence key issuance and verification — signing scheme, offline grace period, and what a self-hoster's expired key degrades to.
-3. iOS local store details: GRDB schema parity, background sync scheduling.
-4. Comments/annotations as a first-class entity — the `commenter` role currently has nothing to write to.
+1. **Licence key issuance and verification.** The client has settled the *format*, and the
+   server should match it rather than invent a second one: Ed25519 over a payload carrying
+   an id, a name and a maximum major version, base64url with an `NT1` prefix, verified
+   offline against a public key compiled into the binary. **There is no clock in a key** —
+   no expiry, no issue-date check, and therefore no offline grace period to design, which
+   is the question that used to sit here. A key that does not reach the running major
+   version is not an error: it is a real purchase that covers an earlier version, and says
+   so. What is genuinely open is server-side: where an instance's key lives, and what
+   `ExportProvider` and `DestinationProvider` do when it is absent or out of range.
+2. **Background sync scheduling on iOS** — see above; the rest of that question is closed.
