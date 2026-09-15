@@ -43,8 +43,8 @@ public class CompileService {
 
     private final JdbcClient jdbc;
     private final ProjectAccess access;
-    private final ExportProvider exports;
-    private final DestinationProvider destinations;
+    private final SupportedExports exports;
+    private final SupportedDestinations destinations;
     private final CompileProperties properties;
     private final ObjectMapper mapper;
     private final LimitProperties limits;
@@ -52,8 +52,8 @@ public class CompileService {
     public CompileService(
             JdbcClient jdbc,
             ProjectAccess access,
-            ExportProvider exports,
-            DestinationProvider destinations,
+            SupportedExports exports,
+            SupportedDestinations destinations,
             CompileProperties properties,
             ObjectMapper mapper,
             LimitProperties limits) {

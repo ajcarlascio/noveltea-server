@@ -29,6 +29,16 @@ Extension points Core owns (and must keep working when nothing implements them):
 
 - `ExportProvider` — Core registers the always-free formats; the private repo registers the
   rest. Unimplemented formats return `501` with an upgrade pointer, never a stack trace.
+  **Registration is additive.** `SupportedExports` aggregates every `ExportProvider` bean
+  and unions their formats, and `SupportedDestinations` does the same for
+  `DestinationProvider`; nothing injects the bare interface. Two rules follow, and
+  `ExtensionPointTest` pins both by registering a second provider the way a commercial
+  build does. A second provider must **start** the application — injecting a single
+  `ExportProvider` failed it with `NoUniqueBeanDefinitionException` the moment one was
+  supplied, which is an extension point that breaks on being extended. And a second
+  provider must **add**, never replace: Core's three formats cannot live inside the bean a
+  licence swaps out, or a mistake there takes away what Core promises rather than merely
+  failing to add to it.
 - `SharingProvider` — **not scaffolded yet.** Unlike `ExportProvider` and
   `DestinationProvider`, which are real interfaces in `com.noveltea.compile`, no
   `SharingProvider` type and no `/members` or `/invitations` controller exist: those
