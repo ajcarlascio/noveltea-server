@@ -227,6 +227,54 @@ describe("mark naming conventions", () => {
     )));
     assert.match(result.output, /<a href="https:\/\/example\.com">see<\/a>/);
   });
+
+  // A known mark raises no warning, so one the serializer has no case for is lost in
+  // silence — the worst shape a formatting bug can take. Every mark the package claims to
+  // recognise has to survive into every format that can express it.
+  test("every recognised mark reaches both serializers, or is deliberately absent", () => {
+    const marked = (mark: string) => doc(para(text("emphatic", [{ type: mark }])));
+    const plain = toMarkdown(doc(para(text("emphatic")))).output;
+
+    for (const mark of ["strong", "em", "code", "strike", "underline"]) {
+      const html = toHtml(marked(mark)).output;
+      assert.notEqual(html, "<p>emphatic</p>", `${mark} left no trace in html`);
+
+      const md = toMarkdown(marked(mark)).output;
+      assert.notEqual(md, plain, `${mark} left no trace in markdown`);
+    }
+  });
+
+  test("underline survives markdown as html, which markdown permits", () => {
+    assert.equal(
+      toMarkdown(doc(para(text("emphatic", [{ type: "underline" }])))).output,
+      "<u>emphatic</u>",
+    );
+    // The alias goes the same way, so the editor's spelling cannot change the output.
+    assert.equal(
+      toMarkdown(doc(para(text("emphatic", [{ type: "underlined" }])))).output,
+      "<u>emphatic</u>",
+    );
+  });
+
+  test("underline does not stop the inner text being escaped", () => {
+    // Only the wrapper is raw. Inline syntax inside it is escaped exactly as it would be
+    // without the mark — a wrapper that turned off escaping would let an author's
+    // asterisks reopen as emphasis.
+    assert.equal(
+      toMarkdown(doc(para(text("a *literal* asterisk", [{ type: "underline" }])))).output,
+      "<u>a \\*literal\\* asterisk</u>",
+    );
+  });
+
+  test("a leading block marker inside underline is no longer at line start", () => {
+    // `#` is syntax only at the start of a line, and the wrapper puts it elsewhere, so
+    // the escape correctly does not fire. Pinned because the opposite — escaping it
+    // anyway — would print a backslash in the author's manuscript.
+    assert.equal(
+      toMarkdown(doc(para(text("# not a heading", [{ type: "underline" }])))).output,
+      "<u># not a heading</u>",
+    );
+  });
 });
 
 describe("paginated html", () => {

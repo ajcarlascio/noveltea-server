@@ -16,6 +16,8 @@ import com.noveltea.binder.BinderExceptions.CrossProjectMove;
 import com.noveltea.merge.MergeExceptions.NotAConflictCopy;
 import com.noveltea.merge.MergeExceptions.StaleOriginal;
 import com.noveltea.snapshot.SnapshotExceptions.SnapshotNotFound;
+import com.noveltea.sync.SyncExceptions.PushBatchTooLarge;
+import com.noveltea.web.RequestSizeLimitFilter.BodyTooLarge;
 import com.noveltea.snapshot.SnapshotExceptions.StaleDocument;
 import com.noveltea.project.ProjectExceptions.ProjectNotDeleted;
 import jakarta.servlet.http.HttpServletRequest;
@@ -96,6 +98,23 @@ public class GlobalExceptionHandler {
                 .body(ApiError.of("forbidden", "forbidden", request.getRequestURI()));
     }
 
+    // ----------------------------------------------------------------- sync
+
+    /**
+     * 413, and the limit is in the body: the client's only fix is to send fewer changes,
+     * and it cannot split to a number it has not been told.
+     */
+    @ExceptionHandler(PushBatchTooLarge.class)
+    public ResponseEntity<ApiError> pushBatchTooLarge(
+            PushBatchTooLarge e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiError.of(
+                        "push_batch_too_large",
+                        e.getMessage(),
+                        request.getRequestURI(),
+                        Map.of("maxChanges", e.limit(), "sentChanges", e.sent())));
+    }
+
     // -------------------------------------------------------------- compile
 
     /**
@@ -160,9 +179,43 @@ public class GlobalExceptionHandler {
 
     // ---------------------------------------------------------- bad requests
 
+    /**
+     * A body that ran past the ceiling while being read, rather than declaring it up front.
+     *
+     * <p>Listed ahead of {@code badRequest} because Jackson wraps whatever the stream threw
+     * in an {@link HttpMessageNotReadableException}, which would otherwise answer 400 —
+     * telling a client its JSON was malformed when the JSON was fine and merely too long.
+     * Handler selection is by the declared type, so the unwrapping is done here.
+     */
+    @ExceptionHandler(BodyTooLarge.class)
+    public ResponseEntity<ApiError> bodyTooLarge(BodyTooLarge e, HttpServletRequest request) {
+        return tooLargeResponse(e, request);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiError> unreadableBody(
+            HttpMessageNotReadableException e, HttpServletRequest request) {
+        for (Throwable cause = e; cause != null && cause != cause.getCause(); cause = cause.getCause()) {
+            if (cause instanceof BodyTooLarge tooLarge) {
+                return tooLargeResponse(tooLarge, request);
+            }
+        }
+        return ResponseEntity.badRequest()
+                .body(ApiError.of("bad_request", safeMessage(e), request.getRequestURI()));
+    }
+
+    private static ResponseEntity<ApiError> tooLargeResponse(
+            BodyTooLarge e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                .body(ApiError.of(
+                        "payload_too_large",
+                        e.getMessage(),
+                        request.getRequestURI(),
+                        Map.of("maxBytes", e.maxBytes())));
+    }
+
     @ExceptionHandler({
         IllegalArgumentException.class,
-        HttpMessageNotReadableException.class,
         MethodArgumentTypeMismatchException.class,
         MissingRequestHeaderException.class,
         // A missing or unbindable query parameter is the caller's mistake, not ours.

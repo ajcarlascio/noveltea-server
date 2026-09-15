@@ -18,12 +18,12 @@ import org.springframework.web.bind.annotation.*;
 @Tag(name = "Compile", description = "What this installation can export to.")
 public class CompileController {
 
-    private final ExportProvider exports;
-    private final DestinationProvider destinations;
+    private final SupportedExports exports;
+    private final SupportedDestinations destinations;
     private final ProjectAccess access;
 
     public CompileController(
-            ExportProvider exports, DestinationProvider destinations, ProjectAccess access) {
+            SupportedExports exports, SupportedDestinations destinations, ProjectAccess access) {
         this.exports = exports;
         this.destinations = destinations;
         this.access = access;
