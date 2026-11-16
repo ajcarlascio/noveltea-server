@@ -184,6 +184,8 @@ paths:
 
         A `document` write that loses a conflict is never merged and never dropped: the server keeps its own version, and the client's is preserved as a sibling "conflict copy" binder item, whose id comes back as `conflictCopyId` on the `ConflictRecord` — non-null there means the author's text survived elsewhere and needs manual reconciliation via the Conflicts endpoints. Tree writes (`binder_item`) are last-write-wins instead; only document content gets a conflict copy.
 
+        A `binder_item` change may carry `label_id` and `status_id`: absent leaves the tag unchanged, `null` clears it, a value sets it. The value must be a live `label` (resp. `status`) taxonomy row in this project, otherwise the whole change is an `invalid_request` conflict.
+
         See `ConflictReason` for the `reason` values: `version_mismatch` (stale `baseVersion` — the conflict-copy case above), `duplicate_create`, `entity_missing`, `invalid_request`, and `not_implemented` for entity types this push path does not yet handle.
       operationId: push
       parameters:

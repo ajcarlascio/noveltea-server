@@ -7,6 +7,7 @@ import com.noveltea.config.LimitProperties;
 import com.noveltea.config.Utf8;
 import com.noveltea.model.ChangeOp;
 import com.noveltea.model.EntityType;
+import com.noveltea.model.TaxonomyKind;
 import com.noveltea.order.FractionalIndex;
 import com.noveltea.sync.entity.EntityValidationException;
 import com.noveltea.sync.entity.SyncEntityWriter;
@@ -728,23 +729,27 @@ public class SyncService {
         requireContentWithinLimit(content);
 
         if (current.isEmpty()) {
-            if ("create".equals(change.op())) {
-                // The binder_item must already exist (pushed in the same batch or earlier)
-                // and be live: inserting a document body for a tombstoned item would hand
-                // retention something to destroy.
-                Optional<String> title = jdbc
-                        .sql("SELECT title FROM binder_item WHERE id = :id AND project_id = :projectId AND deleted_at IS NULL")
-                        .param("id", change.entityId())
-                        .param("projectId", projectId)
-                        .query(String.class)
-                        .optional();
-                if (title.isEmpty()) {
-                    conflicts.add(new ConflictRecord(
-                            change.entityId(), "document", ConflictReason.ENTITY_MISSING, null, null));
-                    return;
-                }
+            // The body of a document the server has an item for but no row yet. A client
+            // creates the item and its empty body together but queues only the item; the
+            // first text arrives as an `update`, so a create-only rule parked every new
+            // document's first words in a "Recovered" copy. Treated as the create it is.
+            // The binder_item must be live (a body for a tombstoned item would hand
+            // retention something to destroy) and a document.
+            Optional<String> title = jdbc
+                    .sql("SELECT title FROM binder_item WHERE id = :id AND project_id = :projectId"
+                            + " AND deleted_at IS NULL AND type = 'document'")
+                    .param("id", change.entityId())
+                    .param("projectId", projectId)
+                    .query(String.class)
+                    .optional();
+            if (title.isPresent()) {
                 insertDocument(projectId, deviceId, change.entityId(), content, change);
                 applied.add(new AppliedChange(change.entityId(), "document", 1L));
+                return;
+            }
+            if ("create".equals(change.op())) {
+                conflicts.add(new ConflictRecord(
+                        change.entityId(), "document", ConflictReason.ENTITY_MISSING, null, null));
                 return;
             }
             // An update for a document the server does not have. Rather than discard the
@@ -855,6 +860,9 @@ public class SyncService {
         // any length — and a title is echoed into the binder of every device on the
         // project, so an absurd one is not merely this row's problem.
         requireTitleWithinLimit(change);
+        // Validated before either write for the same reason: both branches store them.
+        requireTaxonomyRef(projectId, change, "label_id", TaxonomyKind.LABEL);
+        requireTaxonomyRef(projectId, change, "status_id", TaxonomyKind.STATUS);
 
         if (current.isEmpty()) {
             // An update for a row the server has never seen is treated as a create when
@@ -881,9 +889,13 @@ public class SyncService {
             }
             jdbc.sql("""
                     INSERT INTO binder_item
-                        (id, project_id, parent_id, type, title, order_key, version, updated_by_device_id)
-                    VALUES (:id, :projectId, :parentId, :type, :title, :orderKey, 1, :deviceId)
+                        (id, project_id, parent_id, type, title, order_key, label_id, status_id,
+                         version, updated_by_device_id)
+                    VALUES (:id, :projectId, :parentId, :type, :title, :orderKey, :labelId, :statusId,
+                            1, :deviceId)
                     """)
+                    .param("labelId", optionalUuid(change, "label_id"))
+                    .param("statusId", optionalUuid(change, "status_id"))
                     .param("id", change.entityId())
                     .param("projectId", projectId)
                     .param("parentId", optionalUuid(change, "parent_id"))
@@ -915,6 +927,12 @@ public class SyncService {
                    SET title = coalesce(:title, title),
                        parent_id = coalesce(:parentId, parent_id),
                        order_key = coalesce(:orderKey, order_key),
+                       -- Absent = unchanged, null = cleared, value = set. The client sends a
+                       -- tag only when the author changed it, so null must not mean "keep".
+                       label_id = CASE WHEN CAST(:labelSent AS boolean)
+                                       THEN CAST(:labelId AS uuid) ELSE label_id END,
+                       status_id = CASE WHEN CAST(:statusSent AS boolean)
+                                        THEN CAST(:statusId AS uuid) ELSE status_id END,
                        version = :next,
                        updated_by_device_id = :deviceId,
                        updated_at = now()
@@ -928,6 +946,10 @@ public class SyncService {
                 .param("title", optionalText(change, "title"))
                 .param("parentId", optionalUuid(change, "parent_id"))
                 .param("orderKey", optionalText(change, "order_key"))
+                .param("labelSent", sent(change, "label_id"))
+                .param("labelId", optionalUuid(change, "label_id"))
+                .param("statusSent", sent(change, "status_id"))
+                .param("statusId", optionalUuid(change, "status_id"))
                 .param("next", next)
                 .param("deviceId", deviceId)
                 .param("id", change.entityId())
@@ -1089,6 +1111,30 @@ public class SyncService {
      * change rather than a 500 that fails the batch — see {@code push}. The message is
      * ours, so it is safe to echo back.
      */
+    /**
+     * A tag must name a live taxonomy row of the right kind in this project. Refused like
+     * a bad {@code parent_id} (one {@code invalid_request} conflict, nothing written):
+     * storing null instead would silently drop the author's tag while reporting success.
+     * The message is the same for missing, foreign, wrong-kind and tombstoned so a caller
+     * learns nothing about other projects.
+     */
+    private void requireTaxonomyRef(UUID projectId, ChangeRequest change, String field, TaxonomyKind kind) {
+        UUID ref = optionalUuid(change, field);
+        if (ref == null) {
+            return;
+        }
+        boolean ok = Boolean.TRUE.equals(jdbc.sql("""
+                SELECT EXISTS (SELECT 1 FROM taxonomy
+                                WHERE id = :id AND project_id = :projectId
+                                  AND kind = :kind AND deleted_at IS NULL)
+                """)
+                .param("id", ref).param("projectId", projectId).param("kind", kind.wire())
+                .query(Boolean.class).single());
+        if (!ok) {
+            throw new IllegalArgumentException(field + " does not refer to a " + kind.wire() + " in this project");
+        }
+    }
+
     private void requireTitleWithinLimit(ChangeRequest change) {
         String title = optionalText(change, "title");
         if (title != null && title.length() > limits.maxTitleLength()) {

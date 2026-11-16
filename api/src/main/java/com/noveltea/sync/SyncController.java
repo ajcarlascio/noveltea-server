@@ -108,6 +108,11 @@ public class SyncController {
                     Conflicts endpoints. Tree writes (`binder_item`) are last-write-wins \
                     instead; only document content gets a conflict copy.
 
+                    A `binder_item` change may carry `label_id` and `status_id`: absent \
+                    leaves the tag unchanged, `null` clears it, a value sets it. The value \
+                    must be a live `label` (resp. `status`) taxonomy row in this project, \
+                    otherwise the whole change is an `invalid_request` conflict.
+
                     See `ConflictReason` for the `reason` values: `version_mismatch` (stale \
                     `baseVersion` — the conflict-copy case above), `duplicate_create`, \
                     `entity_missing`, `invalid_request`, and `not_implemented` for entity \

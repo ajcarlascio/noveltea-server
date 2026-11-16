@@ -167,4 +167,21 @@ class SyncDocumentFieldsTest extends AbstractPostgresTest {
                 .allSatisfy(c -> assertThat(c.data().get("synopsis").asText())
                         .isEqualTo("She climbs the tower."));
     }
+
+    @Test
+    @DisplayName("the first text of a document created in the same push is stored, not parked as a copy")
+    void firstTextOfANewDocumentLandsInItsOwnRow() {
+        UUID id = UUID.randomUUID();
+        ObjectNode item = mapper.createObjectNode();
+        item.put("type", "document").put("title", "New").put("order_key", "V");
+
+        PushResponse response = sync.push(projectId, deviceA, List.of(
+                new ChangeRequest("binder_item", id, "create", 1L, item),
+                update(id, 1L, contentOnly("first words"))));
+
+        assertThat(response.conflicts()).isEmpty();
+        assertThat(contentOf(id)).contains("first words");
+        assertThat(jdbc.sql("SELECT count(*) FROM binder_item WHERE project_id = :p")
+                        .param("p", projectId).query(Long.class).single()).isEqualTo(1);
+    }
 }
