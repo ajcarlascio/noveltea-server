@@ -1,0 +1,6 @@
+# TLS in front of the web container. NOVELTEA_TLS is empty for a public hostname (Caddy
+# fetches a Let's Encrypt certificate) or `internal` for Caddy's own CA.
+{$NOVELTEA_HOSTNAME} {
+	tls {$NOVELTEA_TLS}
+	reverse_proxy web:80
+}

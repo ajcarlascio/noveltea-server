@@ -102,6 +102,35 @@ docker compose up -d
 Then open `http://localhost:8080` and sign in with `admin@localhost` / `admin` — which the
 server will immediately make you replace. See **First run** above.
 
+**That address works only on the machine running the stack.** The client keeps your writing
+in a SQLite database on OPFS, and browsers offer OPFS and service workers only over HTTPS or
+on `localhost`. Open `http://<server>:8080` from another machine and the app still loads but
+runs in memory: everything is lost when the tab closes. To serve other machines, use HTTPS.
+
+### HTTPS
+
+```bash
+# in .env: NOVELTEA_HOSTNAME=write.example.com   (and NOVELTEA_TLS=internal for a LAN-only host)
+curl -O https://raw.githubusercontent.com/ajcarlascio/noveltea-server/main/deploy/docker-compose.https.yml
+curl -O https://raw.githubusercontent.com/ajcarlascio/noveltea-server/main/deploy/Caddyfile
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+```
+
+A Caddy container takes ports 80 and 443 and terminates TLS in front of the web container,
+which stops publishing its own port. With a public DNS name pointing at the host, Caddy gets
+a Let's Encrypt certificate on its own. On a LAN-only host set `NOVELTEA_TLS=internal`:
+Caddy signs with its own CA and each browser has to trust that root once. Export it with
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https.yml cp caddy:/data/caddy/pki/authorities/local/root.crt ./noveltea-root.crt
+```
+
+and import it as a trusted authority on every device (Firefox keeps its own store).
+
+**Bring your own reverse proxy** instead: forward to the `web` container, and set
+`NOVELTEA_TRUSTED_PROXY` on it to the proxy's CIDR so login rate limiting sees real client
+addresses, not the proxy's.
+
 | Image | |
 |---|---|
 | `ghcr.io/ajcarlascio/noveltea-api` | Spring Boot API. Runs Liquibase at startup, so there is no separate migration step. |
@@ -280,7 +309,7 @@ Honest status. None is fixed by pretending otherwise.
 
 ## Testing
 
-Around 330 Java tests and 130 Node tests, against real Postgres and real SQLite — never an
+The Java and Node suites run against real Postgres and real SQLite — never an
 in-memory substitute, because the parts most likely to be wrong (MVCC visibility, partial
 indexes, `FOR UPDATE SKIP LOCKED`) are exactly what a substitute replaces.
 
