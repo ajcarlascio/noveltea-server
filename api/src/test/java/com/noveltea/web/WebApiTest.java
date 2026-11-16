@@ -290,4 +290,29 @@ class WebApiTest extends AbstractPostgresTest {
 
         assertThat(result.getResponse().getStatus()).isEqualTo(400);
     }
+
+    @Test
+    @DisplayName("creating a project with another account's id is a 409 project_id_taken and creates nothing")
+    void projectIdTakenIs409() throws Exception {
+        Session owner = register();
+        Session stranger = register();
+        UUID id = UUID.randomUUID();
+        jdbc.sql("INSERT INTO project (id, owner_id, title) VALUES (:id, :o, 'Secret')")
+                .param("id", id).param("o", owner.userId()).update();
+
+        MvcResult result = mvc.perform(post("/api/v1/projects")
+                        .header("Authorization", "Bearer " + stranger.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"id\":\"" + id + "\",\"title\":\"Mine\"}"))
+                .andReturn();
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(409);
+        JsonNode json = body(result);
+        assertThat(json.get("error").asText()).isEqualTo("project_id_taken");
+        assertThat(json.get("message").asText()).doesNotContain("Secret");
+        assertThat(jdbc.sql("SELECT count(*) FROM project WHERE id = :id")
+                .param("id", id).query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT owner_id FROM project WHERE id = :id")
+                .param("id", id).query(java.util.UUID.class).single()).isEqualTo(owner.userId());
+    }
 }

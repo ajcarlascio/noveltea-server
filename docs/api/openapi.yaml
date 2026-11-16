@@ -106,6 +106,8 @@ paths:
     post:
       tags:
       - Projects
+      description: "With a client-supplied `id`, the same owner repeating the call\
+        \ (a retry) gets the existing project back unchanged."
       operationId: create
       requestBody:
         content:
@@ -114,6 +116,12 @@ paths:
               $ref: "#/components/schemas/CreateProjectRequest"
         required: true
       responses:
+        "409":
+          description: "`project_id_taken`: another account already uses this id."
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "201":
           description: Created
           content:
@@ -1304,6 +1312,22 @@ components:
           $ref: "#/components/schemas/JsonNode"
     JsonNode:
       type: object
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        path:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        details:
+          type: object
+          additionalProperties:
+            type: object
     Project:
       type: object
       properties:

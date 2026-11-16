@@ -52,25 +52,24 @@ public class ProjectService {
         // unsyncable with no error. The refusal says nothing about the other project.
         UUID id = clientId != null ? clientId : UUID.randomUUID();
 
-        if (clientId != null) {
-            var existing = jdbc.sql("SELECT owner_id FROM project WHERE id = :id")
-                    .param("id", id).query().listOfRows();
-            if (!existing.isEmpty()) {
-                UUID existingOwner = (UUID) existing.getFirst().get("owner_id");
-                if (existingOwner.equals(ownerId)) {
-                    return get(id, true);
-                }
-                throw new ProjectIdTaken();
-            }
-        }
-
-        jdbc.sql("""
+        // One statement decides the race: a concurrent create with the same id cannot both
+        // insert, so the loser lands in the branch below instead of on the primary key.
+        // Nothing else runs after the insert, so the loser has nothing to skip.
+        int inserted = jdbc.sql("""
                 INSERT INTO project (id, owner_id, title, settings)
                 VALUES (:id, :ownerId, :title, CAST(:settings AS jsonb))
+                ON CONFLICT (id) DO NOTHING
                 """)
                 .param("id", id).param("ownerId", ownerId)
                 .param("title", cleanTitle).param("settings", cleanSettings)
                 .update();
+        if (inserted == 0) {
+            UUID existingOwner = jdbc.sql("SELECT owner_id FROM project WHERE id = :id")
+                    .param("id", id).query(UUID.class).single();
+            if (!existingOwner.equals(ownerId)) {
+                throw new ProjectIdTaken();
+            }
+        }
         return get(id, true);
     }
 
