@@ -22,6 +22,7 @@ npm install && npm start -w @noveltea/worker           # compile worker
 ```
 
 Health: `GET /health` (liveness) and `GET /health/ready` (touches the database).
+Sign-up check: `GET /api/v1/auth/config` → `{"registrationOpen": bool}`, unauthenticated.
 
 ### First run
 

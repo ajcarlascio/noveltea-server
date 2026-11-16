@@ -58,6 +58,15 @@ class WebApiTest extends AbstractPostgresTest {
      * shipped configuration does not — see {@code RegistrationPolicyTest} for the default.
      */
     @Test
+    @DisplayName("the config endpoint needs no token and reports registration open")
+    void configReportsOpenRegistration() throws Exception {
+        mvc.perform(get("/api/v1/auth/config"))
+                .andExpect(r -> assertThat(r.getResponse().getStatus()).isEqualTo(200))
+                .andExpect(r -> assertThat(r.getResponse().getContentAsString())
+                        .isEqualTo("{\"registrationOpen\":true}"));
+    }
+
+    @Test
     @DisplayName("where registration is open, it returns a usable session")
     void registrationIsOpen() throws Exception {
         String payload = """

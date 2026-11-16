@@ -468,6 +468,22 @@ paths:
       responses:
         "200":
           description: OK
+  /api/v1/auth/config:
+    get:
+      tags:
+      - Auth
+      summary: Whether this instance accepts self-service registration
+      description: Public. Lets a client hide its sign-up link instead of offering
+        one that answers 403 registration_closed. Reveals this one flag and nothing
+        else about the deployment.
+      operationId: config
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AuthConfigResponse"
   /api/v1/auth/register:
     post:
       tags:
@@ -1493,6 +1509,11 @@ components:
           type: string
         platform:
           type: string
+    AuthConfigResponse:
+      type: object
+      properties:
+        registrationOpen:
+          type: boolean
     SessionResponse:
       type: object
       properties:

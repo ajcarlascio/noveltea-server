@@ -17,9 +17,11 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService auth;
+    private final AuthProperties properties;
 
-    public AuthController(AuthService auth) {
+    public AuthController(AuthService auth, AuthProperties properties) {
         this.auth = auth;
+        this.properties = properties;
     }
 
     public record CredentialsRequest(String email, String password, String deviceName, String platform) {}
@@ -44,6 +46,19 @@ public class AuthController {
                     s.userId(), s.deviceId(), s.accessToken(), s.refreshToken(),
                     s.expiresInSeconds(), s.mustChangePassword(), s.isAdmin());
         }
+    }
+
+    public record AuthConfigResponse(boolean registrationOpen) {}
+
+    @Operation(
+            summary = "Whether this instance accepts self-service registration",
+            description = "Public. Lets a client hide its sign-up link instead of offering one "
+                    + "that answers 403 registration_closed. Reveals this one flag and "
+                    + "nothing else about the deployment.",
+            security = {})
+    @GetMapping("/auth/config")
+    public AuthConfigResponse config() {
+        return new AuthConfigResponse(properties.openRegistration());
     }
 
     @Operation(
