@@ -102,6 +102,50 @@ docker compose up -d
 Then open `http://localhost:8080` and sign in with `admin@localhost` / `admin` — which the
 server will immediately make you replace. See **First run** above.
 
+**That address can save your writing only on the machine running the stack.** The client keeps
+it in a SQLite database on OPFS, and browsers offer OPFS and service workers only over HTTPS or
+on `localhost`. Open `http://<server>:8080` from another machine and the page loads, but the app
+runs in memory and cannot save: everything is lost when the tab closes. To serve other
+machines, use HTTPS.
+
+### HTTPS
+
+```bash
+# in .env: NOVELTEA_HOSTNAME=write.example.com   (and NOVELTEA_TLS=internal for a LAN-only host)
+curl -O https://raw.githubusercontent.com/ajcarlascio/noveltea-server/main/deploy/docker-compose.https.yml
+curl -O https://raw.githubusercontent.com/ajcarlascio/noveltea-server/main/deploy/Caddyfile
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+```
+
+Needs Docker Compose 2.24 or newer (the overlay uses `ports: !reset []`).
+
+A Caddy container takes ports 80 and 443 and terminates TLS in front of the web container,
+which stops publishing its own port. With a public DNS name pointing at the host, Caddy gets
+a Let's Encrypt certificate on its own. On a LAN-only host set `NOVELTEA_TLS=internal`:
+Caddy signs with its own CA and each browser has to trust that root once. Export it with
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https.yml cp caddy:/data/caddy/pki/authorities/local/root.crt ./noveltea-root.crt
+```
+
+and import it as a trusted authority on every device (Firefox keeps its own store).
+
+With the overlay:
+
+- `NOVELTEA_PORT` no longer does anything; Caddy publishes `NOVELTEA_HTTP_PORT` and
+  `NOVELTEA_HTTPS_PORT` instead.
+- Set `NOVELTEA_APP_URL` to the https URL (`https://write.example.com`): it is the base of the
+  links in password-reset emails.
+- The overlay gives the compose network a fixed subnet (`172.28.77.0/24`, used for
+  `NOVELTEA_TRUSTED_PROXY` too). Adding it to a stack that is already running recreates that
+  network and the containers: a brief restart, and the named volumes survive. If the host
+  already uses that range compose fails with "Pool overlaps"; set `NOVELTEA_SUBNET` to a free
+  range.
+
+**Bring your own reverse proxy** instead: forward to the `web` container, and set
+`NOVELTEA_TRUSTED_PROXY` on it to the proxy's CIDR so login rate limiting sees real client
+addresses, not the proxy's.
+
 | Image | |
 |---|---|
 | `ghcr.io/ajcarlascio/noveltea-api` | Spring Boot API. Runs Liquibase at startup, so there is no separate migration step. |
@@ -115,6 +159,11 @@ server will immediately make you replace. See **First run** above.
 through the web container. That is what lets `noveltea.cors.allowed-origins` stay empty, and
 an empty allow-list means no other origin can drive the browser client. Splitting them
 across two hostnames works, but then the client's origin has to be listed.
+
+**The desktop app is another origin.** It calls your server with the webview's `fetch`, so
+CORS applies. Set `NOVELTEA_CORS_ALLOWED_ORIGINS` in `.env` (comma-separated, exact) to the
+origin the app sends: `tauri://localhost` on macOS and Linux, `http://tauri.localhost` on
+Windows, e.g. `NOVELTEA_CORS_ALLOWED_ORIGINS=tauri://localhost,http://tauri.localhost`.
 
 **Three volumes, and only one of them matters.** `pgdata` holds every novel on the instance;
 `exports` and `staging` hold compile artifacts, which regenerate. Back up the database:
@@ -280,7 +329,7 @@ Honest status. None is fixed by pretending otherwise.
 
 ## Testing
 
-Around 330 Java tests and 130 Node tests, against real Postgres and real SQLite — never an
+The Java and Node suites run against real Postgres and real SQLite — never an
 in-memory substitute, because the parts most likely to be wrong (MVCC visibility, partial
 indexes, `FOR UPDATE SKIP LOCKED`) are exactly what a substitute replaces.
 
