@@ -34,7 +34,10 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * Maps every exception the API can raise to a status and a stable error code.
@@ -247,6 +250,28 @@ public class GlobalExceptionHandler {
         log.error("NullPointerException handling {} {}", request.getMethod(), request.getRequestURI(), e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiError.of("internal_error", "internal error", request.getRequestURI()));
+    }
+
+    /**
+     * A path nothing serves. Without this the catch-all below answers 500, which tells a
+     * client (and an uptime probe) the server is broken when the address is merely wrong.
+     * The body is the same fixed text as {@code AccessDenied}, so it echoes only the path
+     * the caller already sent. Unauthenticated callers never get here: the security chain
+     * answers 401 for every unauthenticated path, known or not.
+     */
+    @ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
+    public ResponseEntity<ApiError> noSuchRoute(HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("not_found", "not found", request.getRequestURI()));
+    }
+
+    /** The route exists but not for this verb; {@code Allow} says which verbs it does take. */
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiError> wrongMethod(
+            HttpRequestMethodNotSupportedException e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .headers(e.getHeaders())
+                .body(ApiError.of("method_not_allowed", "method not allowed", request.getRequestURI()));
     }
 
     @ExceptionHandler(Exception.class)
