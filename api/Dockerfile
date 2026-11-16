@@ -39,10 +39,13 @@ FROM eclipse-temurin:21-jre-alpine AS runtime
 # Two volumes' worth of meaning, and only one of them is the author's work. Both are
 # created here so the image runs correctly with neither mounted — a first `docker run`
 # should not fail on a missing directory — and chowned so the unprivileged user can write.
+# Uid and gid 1000 on purpose: the worker image runs as node (1000) and shares both
+# volumes. With two different owners, whichever container reached a fresh volume first
+# decided whether the worker could write an export at all.
 ENV NOVELTEA_EXPORT_PATH=/var/lib/noveltea/exports \
     NOVELTEA_STAGING_PATH=/var/lib/noveltea/staging
 
-RUN addgroup -S noveltea && adduser -S -G noveltea -h /var/lib/noveltea noveltea \
+RUN addgroup -S -g 1000 noveltea && adduser -S -u 1000 -G noveltea -h /var/lib/noveltea noveltea \
     && mkdir -p "$NOVELTEA_EXPORT_PATH" "$NOVELTEA_STAGING_PATH" \
     && chown -R noveltea:noveltea /var/lib/noveltea
 
