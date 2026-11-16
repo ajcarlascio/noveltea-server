@@ -107,6 +107,8 @@ class ProjectJourneyE2ETest extends AbstractPostgresTest {
                 .header("Authorization", "Bearer " + phoneToken), 200);
 
         assertThat(pull.get("changes")).isNotEmpty();
+        // On the wire, where a client reads it to decide how to rebuild.
+        assertThat(pull.get("stateAvailable").asBoolean()).isTrue();
         boolean sawChapter = false;
         for (JsonNode change : pull.get("changes")) {
             if ("document".equals(change.get("entityType").asText())

@@ -51,7 +51,21 @@ public final class SyncDtos {
                                             + "and resume at "
                                             + "latestId.")
                     boolean resyncRequired,
-            long syncEpoch) {
+            long syncEpoch,
+            @Schema(
+                            description =
+                                    "This server serves GET /sync/state, so a rebuild must "
+                                            + "use it and treat any failure of it as a failed "
+                                            + "sync. Absent on servers that predate it, which "
+                                            + "is the only way a client can tell the two apart: "
+                                            + "those answer an unknown route with 500, which a "
+                                            + "real failure also is.")
+                    boolean stateAvailable) {
+
+        public PullResponse(
+                List<ChangeRecord> changes, long latestId, boolean hasMore, boolean resyncRequired, long syncEpoch) {
+            this(changes, latestId, hasMore, resyncRequired, syncEpoch, true);
+        }
 
         public PullResponse(List<ChangeRecord> changes, long latestId, boolean hasMore) {
             this(changes, latestId, hasMore, false, 1L);

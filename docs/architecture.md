@@ -354,6 +354,10 @@ do not: taxonomy, custom metadata fields and values, collections and their items
 presets, comments, and manual snapshots (without content, as in the feed). Without it a
 rebuilt replica has its tree and its prose and none of what hangs on them.
 
+- **Advertised, not probed.** Every `PullResponse` carries `stateAvailable: true`. Servers
+  before this answer the unknown route with 500, so a status code cannot tell "too old" from
+  "failed"; a client that sees the flag must treat any failure as a failed sync, and only one
+  that does not may fall back to the tree and the bodies alone.
 - **Rows are shaped as feed rows** — `to_jsonb` of the table row under
   `{entityType, entityId, data}` — so a client applies them with the code that applies a pull.
 - **One snapshot.** The reads run in one repeatable-read transaction; at read committed a

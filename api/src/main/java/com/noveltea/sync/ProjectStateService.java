@@ -97,7 +97,14 @@ public class ProjectStateService {
      * Repeatable read, so every table is read from one snapshot. At read committed each
      * statement sees its own, and a collection deleted between two of them would come back
      * as items with no collection.
+     *
+     * <p>Any failure here — a statement, an unreadable row — escapes as an exception, so the
+     * client gets the API's ordinary 500 error body and never a partial list. That matters:
+     * the client prunes whatever a successful answer leaves out.
      */
+    // ponytail: one unpaginated response, materialised in one transaction; fine for a
+    // novel's worth of labels, comments and snapshot headers. Page by type, the way
+    // GET /documents pages by bytes, once a project's state outgrows one response.
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public List<EntityRow> state(UUID projectId) {
         List<EntityRow> out = new ArrayList<>();
