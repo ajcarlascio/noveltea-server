@@ -987,6 +987,15 @@ public class SyncService {
         insertCopy(projectId, parentId, copyId, conflictTitle(title, deviceId),
                 nextKeyAfter(projectId, parentId, afterKey), deviceId, originalId, baseVersion);
         insertDocumentRaw(projectId, deviceId, copyId, content);
+        if (original != null) {
+            // The original is unchanged, but the device that lost the conflict still shows
+            // its own text there: it keeps a document's local row while that row has an
+            // unpushed change, rather than overwrite unsynced writing. Its text is now
+            // safe in the copy, so the original goes back on the feed for that device to
+            // take the server's version on its next pull. Every other device re-applies
+            // what it already has.
+            recordChange(projectId, "document", originalId, "update", deviceId);
+        }
         return copyId;
     }
 

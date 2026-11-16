@@ -106,6 +106,8 @@ class SyncEpochTest extends AbstractPostgresTest {
         var response = sync.pull(projectId, deviceA, 1L, 100, 1L);
         assertThat(response.resyncRequired()).isTrue();
         assertThat(response.syncEpoch()).isEqualTo(1);
+        // What tells a client to rebuild from /sync/state rather than guess from a status code.
+        assertThat(response.stateAvailable()).isTrue();
     }
 
     @Test

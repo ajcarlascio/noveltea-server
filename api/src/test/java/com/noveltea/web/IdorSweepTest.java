@@ -225,6 +225,7 @@ class IdorSweepTest extends AbstractPostgresTest {
                 "/api/v1/projects/{projectId}",
                 "/api/v1/projects/{projectId}/binder",
                 "/api/v1/projects/{projectId}/sync",
+                "/api/v1/projects/{projectId}/sync/state",
                 "/api/v1/projects/{projectId}/conflicts",
                 "/api/v1/projects/{projectId}/compile/formats",
                 "/api/v1/devices");

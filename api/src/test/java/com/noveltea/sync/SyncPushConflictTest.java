@@ -82,6 +82,23 @@ class SyncPushConflictTest extends AbstractPostgresTest {
     }
 
     @Test
+    @DisplayName("the losing device is sent the original again, to replace the text it kept")
+    void conflictPutsTheOriginalBackOnTheFeed() {
+        UUID docId = seedDocument("Chapter One", "V", "original");
+        sync.push(projectId, deviceA, List.of(documentUpdate(docId, 1L, "device A rewrite")));
+        long cursor = sync.pull(projectId, deviceB, 0, 500).latestId();
+
+        // Device B kept its own text locally while its change was unpushed, so the row it
+        // was sent before is not one it applied. Without a fresh one it never converges.
+        sync.push(projectId, deviceB, List.of(documentUpdate(docId, 1L, "device B rewrite")));
+
+        assertThat(sync.pull(projectId, deviceB, cursor, 500).changes())
+                .filteredOn(c -> c.entityId().equals(docId))
+                .singleElement()
+                .satisfies(c -> assertThat(c.data().get("content").toString()).contains("device A rewrite"));
+    }
+
+    @Test
     @DisplayName("the conflict copy is a titled sibling of the original, not a replacement")
     void conflictCopyIsASiblingWithADistinguishingTitle() {
         UUID docId = seedDocument("Chapter One", "V", "original");
