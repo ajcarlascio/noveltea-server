@@ -3,8 +3,11 @@ package com.noveltea.project;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
+import com.noveltea.web.ApiError;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.UUID;
@@ -40,6 +43,13 @@ public class ProjectController {
         return projects.listDeleted(user.userId());
     }
 
+    @Operation(
+            description = "With a client-supplied `id`, the same owner repeating the call "
+                    + "(a retry) gets the existing project back unchanged.")
+    @ApiResponse(
+            responseCode = "409",
+            description = "`project_id_taken`: another account already uses this id.",
+            content = @Content(schema = @Schema(implementation = ApiError.class)))
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public Project create(

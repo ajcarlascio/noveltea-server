@@ -11,6 +11,7 @@ import com.noveltea.auth.AuthService.Session;
 import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
 import com.noveltea.binder.BinderService;
+import com.noveltea.project.ProjectExceptions.ProjectIdTaken;
 import com.noveltea.project.ProjectExceptions.ProjectNotDeleted;
 import com.noveltea.support.AbstractPostgresTest;
 import java.util.UUID;
@@ -307,15 +308,45 @@ class ProjectServiceTest extends AbstractPostgresTest {
     }
 
     @Test
-    @DisplayName("a different owner naming the same client id gets a fresh project")
+    @DisplayName("a different owner naming the same client id is refused, not given a substitute")
     void clientIdCollisionAcrossOwners() {
         Session owner = someone();
         Session stranger = someone();
         UUID clientId = UUID.randomUUID();
         projects.create(owner.userId(), clientId, "Owner's Novel", null);
-        Project strangers = projects.create(stranger.userId(), clientId, "Stranger's Novel", null);
-        assertThat(strangers.id()).as("must not reuse the other owner's id")
-                .isNotEqualTo(clientId);
-        assertThat(strangers.title()).isEqualTo("Stranger's Novel");
+        assertThatThrownBy(() -> projects.create(stranger.userId(), clientId, "Stranger's Novel", null))
+                .isInstanceOf(ProjectIdTaken.class)
+                .hasMessageNotContaining("Owner");
+        assertThat(projects.list(stranger.userId())).isEmpty();
+        assertThat(projects.get(clientId, true).ownerId()).isEqualTo(owner.userId());
+    }
+
+    @Test
+    @DisplayName("racing creates with one id: same owner both get the project, others get ProjectIdTaken")
+    void concurrentCreatesWithOneId() throws Exception {
+        Session owner = someone();
+        Session stranger = someone();
+        UUID clientId = UUID.randomUUID();
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(3);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try {
+            var retry1 = pool.submit(() -> { start.await(); return projects.create(owner.userId(), clientId, "A", null); });
+            var retry2 = pool.submit(() -> { start.await(); return projects.create(owner.userId(), clientId, "A", null); });
+            var other = pool.submit(() -> { start.await(); return projects.create(stranger.userId(), clientId, "B", null); });
+            start.countDown();
+            var results = new java.util.ArrayList<Object>();
+            for (var f : java.util.List.of(retry1, retry2, other)) {
+                try { results.add(f.get(30, java.util.concurrent.TimeUnit.SECONDS)); }
+                catch (java.util.concurrent.ExecutionException e) { results.add(e.getCause()); }
+            }
+            assertThat(results).noneMatch(r -> r instanceof Throwable && !(r instanceof ProjectIdTaken));
+            assertThat(rowsFor(clientId)).isEqualTo(1);
+            UUID winner = projects.get(clientId, true).ownerId();
+            // Whoever won, every create by the winner succeeded and every other one was refused.
+            assertThat(results.stream().filter(r -> r instanceof ProjectIdTaken)).hasSize(
+                    winner.equals(owner.userId()) ? 1 : 2);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 }

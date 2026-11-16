@@ -11,4 +11,11 @@ public final class ProjectExceptions {
             super("project " + id + " must be deleted before it can be purged");
         }
     }
+
+    /** A client-supplied project id already belongs to another owner. Says nothing more. */
+    public static class ProjectIdTaken extends RuntimeException {
+        public ProjectIdTaken() {
+            super("that project id is already in use");
+        }
+    }
 }

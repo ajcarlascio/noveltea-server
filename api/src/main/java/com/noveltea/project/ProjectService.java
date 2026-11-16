@@ -2,6 +2,7 @@ package com.noveltea.project;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.noveltea.project.ProjectExceptions.ProjectIdTaken;
 import com.noveltea.project.ProjectExceptions.ProjectNotDeleted;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -46,31 +47,29 @@ public class ProjectService {
         // A client that already has a local project supplies its own id so sync can
         // address it afterwards. Idempotent: if the same owner sends the same id twice
         // (a retry after a lost response), the existing project is returned unchanged.
-        // A different owner naming the same id gets a fresh one — telling them the id
-        // is taken would confirm it exists.
+        // A different owner naming the same id is refused: the client keeps using its own
+        // id for every later sync call, so a substitute id would leave the project
+        // unsyncable with no error. The refusal says nothing about the other project.
         UUID id = clientId != null ? clientId : UUID.randomUUID();
 
-        if (clientId != null) {
-            var existing = jdbc.sql("SELECT owner_id FROM project WHERE id = :id")
-                    .param("id", id).query().listOfRows();
-            if (!existing.isEmpty()) {
-                UUID existingOwner = (UUID) existing.getFirst().get("owner_id");
-                if (existingOwner.equals(ownerId)) {
-                    return get(id, true);
-                }
-                // Collision with another owner: fall through with a fresh id so the
-                // caller gets a working project instead of an error.
-                id = UUID.randomUUID();
-            }
-        }
-
-        jdbc.sql("""
+        // One statement decides the race: a concurrent create with the same id cannot both
+        // insert, so the loser lands in the branch below instead of on the primary key.
+        // Nothing else runs after the insert, so the loser has nothing to skip.
+        int inserted = jdbc.sql("""
                 INSERT INTO project (id, owner_id, title, settings)
                 VALUES (:id, :ownerId, :title, CAST(:settings AS jsonb))
+                ON CONFLICT (id) DO NOTHING
                 """)
                 .param("id", id).param("ownerId", ownerId)
                 .param("title", cleanTitle).param("settings", cleanSettings)
                 .update();
+        if (inserted == 0) {
+            UUID existingOwner = jdbc.sql("SELECT owner_id FROM project WHERE id = :id")
+                    .param("id", id).query(UUID.class).single();
+            if (!existingOwner.equals(ownerId)) {
+                throw new ProjectIdTaken();
+            }
+        }
         return get(id, true);
     }
 
