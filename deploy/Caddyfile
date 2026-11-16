@@ -1,6 +1,8 @@
-# TLS in front of the web container. NOVELTEA_TLS is empty for a public hostname (Caddy
-# fetches a Let's Encrypt certificate) or `internal` for Caddy's own CA.
+# TLS in front of the web container. NOVELTEA_TLS_DIRECTIVE is a whole line, because a bare
+# `tls` with no argument is a syntax error: empty for a public hostname (Caddy fetches a
+# Let's Encrypt certificate), `tls internal` for Caddy's own CA. The compose overlay builds
+# it from NOVELTEA_TLS.
 {$NOVELTEA_HOSTNAME} {
-	tls {$NOVELTEA_TLS}
+	{$NOVELTEA_TLS_DIRECTIVE}
 	reverse_proxy web:80
 }

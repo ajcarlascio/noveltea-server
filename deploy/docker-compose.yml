@@ -71,6 +71,9 @@ services:
       SPRING_MAIL_PASSWORD: ${SMTP_PASSWORD:-}
       NOVELTEA_MAIL_FROM: ${NOVELTEA_MAIL_FROM:-noveltea@localhost}
       NOVELTEA_APP_URL: ${NOVELTEA_APP_URL:-}
+      # Comma-separated exact origins, for noveltea.cors.allowed-origins. Empty is same-origin
+      # only, which is all the browser client served by this stack needs.
+      NOVELTEA_CORS_ALLOWED_ORIGINS: ${NOVELTEA_CORS_ALLOWED_ORIGINS:-}
     volumes:
       # Both, and shared with the worker, because the split is by destination and not by
       # who touches them: the worker writes an artifact to one or the other, and the API
