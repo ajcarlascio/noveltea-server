@@ -452,6 +452,8 @@ bugs.
 
 `SyncService.applyBinderItem` writes `parent_id` directly, so it must run the same guards `BinderService.move` runs — it calls `requireReparentIsSafe`, which takes the project tree lock, refuses a parent in another project, and refuses a cycle.
 
+`label_id` / `status_id` follow the document-field rule: a key absent from the pushed data leaves the tag alone, `null` clears it, a value sets it (the client sends a tag only when the author changed it). The target must be a live taxonomy row of the right kind in the same project; anything else is one `invalid_request` conflict and the rest of that change is not applied, as for a bad `parent_id`. `icon` is not applied: no client UI sets it and the client sends it on every push, so honouring it would let a stale null erase it.
+
 **Do not reimplement those checks here.** The push path originally did its own raw `UPDATE ... SET parent_id`, and a single request could point an item at its own descendant: the subtree then has no root, so it renders nowhere on any device — and the change propagates through `change_log`, orphaning it everywhere at once. One request, an author's manuscript unreachable on every machine they own. A second copy of the rules is a second copy that drifts, which is precisely how that happened.
 
 ## Thread integrity for comments over sync
