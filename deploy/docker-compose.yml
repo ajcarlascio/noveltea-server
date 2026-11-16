@@ -40,10 +40,24 @@ services:
     # nothing outside this stack connects to it. Add a mapping only to run pg_dump from
     # the host, and consider `docker compose exec postgres pg_dump` instead.
 
+  # Runs once and exits. Volumes made by a release where the API and the worker ran as
+  # different users can belong to the wrong one, and then every compile fails on a
+  # permission error; this hands them to the user both run as now.
+  volumes-init:
+    image: ghcr.io/ajcarlascio/noveltea-worker:${NOVELTEA_VERSION:-latest}
+    user: "0"
+    restart: "no"
+    entrypoint: ["chown", "-R", "1000:1000", "/var/lib/noveltea/exports", "/var/lib/noveltea/staging"]
+    volumes:
+      - exports:/var/lib/noveltea/exports
+      - staging:/var/lib/noveltea/staging
+
   api:
     image: ghcr.io/ajcarlascio/noveltea-api:${NOVELTEA_VERSION:-latest}
     restart: unless-stopped
     depends_on:
+      volumes-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
@@ -87,6 +101,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # The API runs the migrations. Started beside it, the worker's first poll finds
+      # no compile_job table and logs an error before settling.
+      api:
+        condition: service_healthy
+      volumes-init:
+        condition: service_completed_successfully
     environment:
       # libpq form, not JDBC: this one is Node talking to Postgres directly.
       NOVELTEA_DB_URL: postgresql://${POSTGRES_USER:-noveltea}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-noveltea}
