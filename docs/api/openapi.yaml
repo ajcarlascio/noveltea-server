@@ -8,7 +8,7 @@ info:
 
     - **A resource the caller may not see returns `404`, never `403`** — a 403 would confirm it exists. Unauthenticated is `401`, so a client knows whether refreshing its token would help.
     - **`POST /projects/{id}/sync` answers `200` even when some changes conflict.** A conflict is an ordinary outcome, reported per change in the response body (`applied` / `conflicts`), not an HTTP error. A `document` conflict never overwrites or merges — the server keeps its version and the client's is preserved as a sibling "conflict copy" (`conflictCopyId`); see `ConflictReason` for why an individual change was rejected.
-    - **`GET /projects/{id}/sync` can answer `resyncRequired: true`.** The client's cursor points into history the server can no longer explain (purged, or the project was restored from backup) and must discard it, rebuild from `GET /binder` plus documents, and resume at the returned `latestId`.
+    - **`GET /projects/{id}/sync` can answer `resyncRequired: true`.** The client's cursor points into history the server can no longer explain (purged, or the project was restored from backup) and must discard it, rebuild from `GET /binder`, documents and `GET /sync/state`, and resume at the returned `latestId`.
     - **Commercial features answer `501`** with error code `unavailable_in_this_edition`. This build is Core: sharing, extra export formats and cloud destinations live in a separate paid module and are reported as an upgrade path, never a stack trace.
     - **Compiling is asynchronous.** `POST /projects/{id}/compile` returns a job id immediately; poll `GET /compile-jobs/{id}` until its status is terminal, then `GET /compile-jobs/{id}/download`.
     - **`POST /auth/password-reset` always answers `202`**, whether or not the address is registered — a different answer would make it an account-enumeration oracle.
@@ -128,7 +128,7 @@ paths:
       description: |-
         Returns rows appended since `since` (exclusive), each carrying the entity's current state. Always answers 200; the response body, not the status code, carries the two conditions a client must check:
 
-        - **`resyncRequired: true`** — the cursor points into history the server can no longer explain, either because it was purged by retention or because the project was restored from an older backup (`syncEpoch` changed). `changes` is empty; the client must discard its cursor, rebuild from `GET /binder` plus documents, and resume pulling from `latestId`.
+        - **`resyncRequired: true`** — the cursor points into history the server can no longer explain, either because it was purged by retention or because the project was restored from an older backup (`syncEpoch` changed). `changes` is empty; the client must discard its cursor, rebuild from `GET /binder`, documents and `GET /sync/state`, and resume pulling from `latestId`.
         - **`hasMore: true`** — more rows exist past this page; pull again from `latestId` before considering the client caught up.
 
         `latestId` is the highest id *actually served*, never the feed's true maximum — advancing past unserved rows would skip them permanently.
@@ -971,6 +971,34 @@ paths:
             '*/*':
               schema:
                 $ref: "#/components/schemas/SearchResults"
+  /api/v1/projects/{projectId}/sync/state:
+    get:
+      tags:
+      - Sync
+      summary: "Read every other synced entity, for a rebuild"
+      description: |-
+        The current rows of each synced type that `GET /binder` and `GET /documents` do not cover: taxonomy, custom metadata fields and values, collections and their items, compile presets, comments, and manual snapshots without their content. This is what a client uses after `GET /sync` answers `resyncRequired`, for the same reason documents exist: once retention has trimmed the feed, nothing else describes them.
+
+        Each row is `{entityType, entityId, data}`, with `data` exactly as a feed row carries it. Rows come in insertion order — anything a row references precedes it — except binder items, which the values, collection items, comments and snapshots at the end need first.
+
+        Tombstoned rows are included, so nothing that references one is left dangling; rows hanging off a tombstoned binder item are not. All of it is read from one snapshot. Fetched after the resync answer, it reflects at least the state at that answer's `latestId`, so resuming the feed there leaves no gap.
+      operationId: state
+      parameters:
+      - name: projectId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EntityRow"
   /api/v1/projects/{projectId}/documents:
     get:
       tags:
@@ -1645,7 +1673,7 @@ components:
           description: "The client's cursor points into history the server can no\
             \ longer explain (purged by retention, or the project was restored from\
             \ an older backup). `changes` is empty; the client must rebuild from GET\
-            \ /binder plus documents and resume at latestId."
+            \ /binder, documents and GET /sync/state, and resume at latestId."
         syncEpoch:
           type: integer
           format: int64
@@ -1685,6 +1713,16 @@ components:
             $ref: "#/components/schemas/SearchHit"
         truncated:
           type: boolean
+    EntityRow:
+      type: object
+      properties:
+        entityType:
+          type: string
+        entityId:
+          type: string
+          format: uuid
+        data:
+          $ref: "#/components/schemas/JsonNode"
     DocumentBody:
       type: object
       properties:

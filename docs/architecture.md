@@ -314,7 +314,7 @@ An hourly sweep (`RetentionService`) removes what nothing will read again: old f
 
 A device that has never synced has cursor 0 and therefore blocks purging entirely — correct, since it has seen nothing. Revoked devices are ignored, or an abandoned laptop would preserve history forever.
 
-**When a cursor falls behind the purge point, the client is told to resync** (`PullResponse.resyncRequired`) and must rebuild from `GET /binder` plus `GET /projects/{id}/documents`. Two details make that safe:
+**When a cursor falls behind the purge point, the client is told to resync** (`PullResponse.resyncRequired`) and must rebuild from `GET /binder`, `GET /projects/{id}/documents` and `GET /projects/{id}/sync/state`. Two details make that safe:
 
 - The comparison is **strictly** below `change_log_purged_below`. A cursor sitting exactly at the purge point has seen everything removed.
 - The returned `latestId` is never below the purge point, **even when the feed is now empty**. Resuming at 0 would put the client straight back into a resync — an infinite loop.
@@ -346,6 +346,24 @@ Three things it copies from the feed on purpose, because the constraints are the
 **Trashed documents are included; tombstoned ones are not.** Trashing is a move and the
 item is still restorable, so a rebuild that dropped it would empty the author's trash
 behind their back. A tombstone means gone.
+
+## The rest of a rebuild
+
+`GET /projects/{id}/sync/state` returns the current rows of every synced type the other two
+do not: taxonomy, custom metadata fields and values, collections and their items, compile
+presets, comments, and manual snapshots (without content, as in the feed). Without it a
+rebuilt replica has its tree and its prose and none of what hangs on them.
+
+- **Rows are shaped as feed rows** — `to_jsonb` of the table row under
+  `{entityType, entityId, data}` — so a client applies them with the code that applies a pull.
+- **One snapshot.** The reads run in one repeatable-read transaction; at read committed a
+  collection deleted between two statements would come back as items with no collection.
+- **Tombstones are included**, because something may still point at one: a binder item's
+  retired label, a reply under a deleted comment. Rows hanging off a tombstoned binder item
+  are not, since `/binder` does not list it.
+- **No cursor of its own.** Fetched after the resync answer, it reflects at least the state at
+  that answer's `latestId`; resuming there replays rows the client may already hold, which an
+  upsert absorbs, and skips none.
 
 ## Search
 

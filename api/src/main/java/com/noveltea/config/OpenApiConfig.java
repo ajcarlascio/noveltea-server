@@ -43,7 +43,8 @@ import org.springframework.context.annotation.Configuration;
                         - **`GET /projects/{id}/sync` can answer `resyncRequired: true`.** The \
                         client's cursor points into history the server can no longer explain (purged, \
                         or the project was restored from backup) and must discard it, rebuild from \
-                        `GET /binder` plus documents, and resume at the returned `latestId`.
+                        `GET /binder`, documents and `GET /sync/state`, and resume at the returned \
+                        `latestId`.
                         - **Commercial features answer `501`** with error code \
                         `unavailable_in_this_edition`. This build is Core: sharing, extra export \
                         formats and cloud destinations live in a separate paid module and are \

@@ -229,17 +229,20 @@ has silently rolled back underneath them.
 
 A client whose cursor has fallen behind the feed's purge point — retention removed the
 rows, or the project was restored from an older backup — is told to resync, and rebuilds
-from two endpoints:
+from three endpoints:
 
 ```
 GET /api/v1/projects/{id}/binder                 the tree
 GET /api/v1/projects/{id}/documents?after=&limit= the bodies, paged
+GET /api/v1/projects/{id}/sync/state             everything else the feed carries
 ```
 
-The second exists only for this. The change feed carries document content, but only on
-rows appended since a cursor, so a client rebuilding from nothing cannot otherwise
-recover a document nobody has edited recently. Page until `hasMore` is false, passing
-each `nextCursor` back as `after`.
+The last two exist only for this. The change feed carries each entity's state, but only
+on rows appended since a cursor, so a client rebuilding from nothing cannot otherwise
+recover a document — or a label, collection, metadata field, preset or comment — nobody
+has touched recently. Page documents until `hasMore` is false, passing each `nextCursor`
+back as `after`. `sync/state` answers `{entityType, entityId, data}` rows shaped as the
+feed shapes them, in insertion order, tombstones included.
 
 ## Known issues
 

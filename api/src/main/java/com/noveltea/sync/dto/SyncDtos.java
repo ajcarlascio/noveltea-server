@@ -26,8 +26,9 @@ public final class SyncDtos {
      */
     /**
      * @param resyncRequired the client's cursor points into history that has been purged.
-     *     It must rebuild from the current state (binder + documents) and resume at
-     *     {@code latestId}, because the feed can no longer explain how things got here.
+     *     It must rebuild from the current state (binder, documents and {@code /sync/state})
+     *     and resume at {@code latestId}, because the feed can no longer explain how things
+     *     got here.
      */
     public record PullResponse(
             List<ChangeRecord> changes,
@@ -46,7 +47,8 @@ public final class SyncDtos {
                                             + "longer explain (purged by retention, or the "
                                             + "project was restored from an older backup). "
                                             + "`changes` is empty; the client must rebuild from "
-                                            + "GET /binder plus documents and resume at "
+                                            + "GET /binder, documents and GET /sync/state, "
+                                            + "and resume at "
                                             + "latestId.")
                     boolean resyncRequired,
             long syncEpoch) {
