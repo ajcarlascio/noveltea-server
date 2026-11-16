@@ -200,7 +200,7 @@ Moves are rare and brief, so serialising them costs nothing measurable next to l
 
 ## Auth and error handling
 
-`POST /auth/register|login` create an account or a session; `POST /auth/pairing-codes` mints a short code on a trusted device, which `POST /auth/pair` redeems to onboard a second one. `POST /auth/refresh` rotates.
+`POST /auth/register|login` create an account or a session; `POST /auth/pairing-codes` mints a short code on a trusted device, which `POST /auth/pair` redeems to onboard a second one. `POST /auth/refresh` rotates. `GET /auth/config` is unauthenticated and answers `{"registrationOpen": bool}` — the one flag a client needs to decide whether to offer sign-up — and nothing else about the deployment; the auth rate limiter only counts POSTs, so it does not spend the login budget.
 
 Rules worth keeping:
 

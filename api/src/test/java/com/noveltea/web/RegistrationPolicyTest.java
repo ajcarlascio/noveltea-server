@@ -2,6 +2,7 @@ package com.noveltea.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -83,6 +84,17 @@ class RegistrationPolicyTest extends AbstractPostgresTest {
         assertThat(mapper.readTree(existing.getResponse().getContentAsString()).get("error"))
                 .as("a different answer for a known address is an account-enumeration oracle")
                 .isEqualTo(mapper.readTree(absent.getResponse().getContentAsString()).get("error"));
+    }
+
+    @Test
+    @DisplayName("a client can ask, without a token, whether it is worth offering sign-up")
+    void configSaysRegistrationIsClosed() throws Exception {
+        MvcResult result = mvc.perform(get("/api/v1/auth/config")).andReturn();
+
+        assertThat(result.getResponse().getStatus()).isEqualTo(200);
+        assertThat(mapper.readTree(result.getResponse().getContentAsString()))
+                .as("one flag and nothing else about the deployment")
+                .isEqualTo(mapper.readTree("{\"registrationOpen\":false}"));
     }
 
     @Test
