@@ -11,6 +11,7 @@ import com.noveltea.auth.AuthService.Session;
 import com.noveltea.auth.CurrentUser;
 import com.noveltea.auth.ProjectAccess;
 import com.noveltea.binder.BinderService;
+import com.noveltea.project.ProjectExceptions.ProjectIdTaken;
 import com.noveltea.project.ProjectExceptions.ProjectNotDeleted;
 import com.noveltea.support.AbstractPostgresTest;
 import java.util.UUID;
@@ -307,15 +308,16 @@ class ProjectServiceTest extends AbstractPostgresTest {
     }
 
     @Test
-    @DisplayName("a different owner naming the same client id gets a fresh project")
+    @DisplayName("a different owner naming the same client id is refused, not given a substitute")
     void clientIdCollisionAcrossOwners() {
         Session owner = someone();
         Session stranger = someone();
         UUID clientId = UUID.randomUUID();
         projects.create(owner.userId(), clientId, "Owner's Novel", null);
-        Project strangers = projects.create(stranger.userId(), clientId, "Stranger's Novel", null);
-        assertThat(strangers.id()).as("must not reuse the other owner's id")
-                .isNotEqualTo(clientId);
-        assertThat(strangers.title()).isEqualTo("Stranger's Novel");
+        assertThatThrownBy(() -> projects.create(stranger.userId(), clientId, "Stranger's Novel", null))
+                .isInstanceOf(ProjectIdTaken.class)
+                .hasMessageNotContaining("Owner");
+        assertThat(projects.list(stranger.userId())).isEmpty();
+        assertThat(projects.get(clientId, true).ownerId()).isEqualTo(owner.userId());
     }
 }

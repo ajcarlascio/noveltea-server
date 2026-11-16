@@ -2,6 +2,7 @@ package com.noveltea.project;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.noveltea.project.ProjectExceptions.ProjectIdTaken;
 import com.noveltea.project.ProjectExceptions.ProjectNotDeleted;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -46,8 +47,9 @@ public class ProjectService {
         // A client that already has a local project supplies its own id so sync can
         // address it afterwards. Idempotent: if the same owner sends the same id twice
         // (a retry after a lost response), the existing project is returned unchanged.
-        // A different owner naming the same id gets a fresh one — telling them the id
-        // is taken would confirm it exists.
+        // A different owner naming the same id is refused: the client keeps using its own
+        // id for every later sync call, so a substitute id would leave the project
+        // unsyncable with no error. The refusal says nothing about the other project.
         UUID id = clientId != null ? clientId : UUID.randomUUID();
 
         if (clientId != null) {
@@ -58,9 +60,7 @@ public class ProjectService {
                 if (existingOwner.equals(ownerId)) {
                     return get(id, true);
                 }
-                // Collision with another owner: fall through with a fresh id so the
-                // caller gets a working project instead of an error.
-                id = UUID.randomUUID();
+                throw new ProjectIdTaken();
             }
         }
 

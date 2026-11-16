@@ -19,6 +19,7 @@ import com.noveltea.snapshot.SnapshotExceptions.SnapshotNotFound;
 import com.noveltea.sync.SyncExceptions.PushBatchTooLarge;
 import com.noveltea.web.RequestSizeLimitFilter.BodyTooLarge;
 import com.noveltea.snapshot.SnapshotExceptions.StaleDocument;
+import com.noveltea.project.ProjectExceptions.ProjectIdTaken;
 import com.noveltea.project.ProjectExceptions.ProjectNotDeleted;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Map;
@@ -161,6 +162,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> notDeleted(ProjectNotDeleted e, HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of("project_not_deleted", e.getMessage(), request.getRequestURI()));
+    }
+
+    @ExceptionHandler(ProjectIdTaken.class)
+    public ResponseEntity<ApiError> idTaken(ProjectIdTaken e, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("project_id_taken", e.getMessage(), request.getRequestURI()));
     }
 
     @ExceptionHandler(StaleDocument.class)
