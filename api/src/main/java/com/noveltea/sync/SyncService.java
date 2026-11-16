@@ -729,23 +729,27 @@ public class SyncService {
         requireContentWithinLimit(content);
 
         if (current.isEmpty()) {
-            if ("create".equals(change.op())) {
-                // The binder_item must already exist (pushed in the same batch or earlier)
-                // and be live: inserting a document body for a tombstoned item would hand
-                // retention something to destroy.
-                Optional<String> title = jdbc
-                        .sql("SELECT title FROM binder_item WHERE id = :id AND project_id = :projectId AND deleted_at IS NULL")
-                        .param("id", change.entityId())
-                        .param("projectId", projectId)
-                        .query(String.class)
-                        .optional();
-                if (title.isEmpty()) {
-                    conflicts.add(new ConflictRecord(
-                            change.entityId(), "document", ConflictReason.ENTITY_MISSING, null, null));
-                    return;
-                }
+            // The body of a document the server has an item for but no row yet. A client
+            // creates the item and its empty body together but queues only the item; the
+            // first text arrives as an `update`, so a create-only rule parked every new
+            // document's first words in a "Recovered" copy. Treated as the create it is.
+            // The binder_item must be live (a body for a tombstoned item would hand
+            // retention something to destroy) and a document.
+            Optional<String> title = jdbc
+                    .sql("SELECT title FROM binder_item WHERE id = :id AND project_id = :projectId"
+                            + " AND deleted_at IS NULL AND type = 'document'")
+                    .param("id", change.entityId())
+                    .param("projectId", projectId)
+                    .query(String.class)
+                    .optional();
+            if (title.isPresent()) {
                 insertDocument(projectId, deviceId, change.entityId(), content, change);
                 applied.add(new AppliedChange(change.entityId(), "document", 1L));
+                return;
+            }
+            if ("create".equals(change.op())) {
+                conflicts.add(new ConflictRecord(
+                        change.entityId(), "document", ConflictReason.ENTITY_MISSING, null, null));
                 return;
             }
             // An update for a document the server does not have. Rather than discard the
