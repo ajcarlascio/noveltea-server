@@ -184,4 +184,40 @@ class SyncDocumentFieldsTest extends AbstractPostgresTest {
         assertThat(jdbc.sql("SELECT count(*) FROM binder_item WHERE project_id = :p")
                         .param("p", projectId).query(Long.class).single()).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("a conflict copy keeps the index card the rejected change carried")
+    void aRejectedSynopsisIsKeptInTheCopy() {
+        UUID docId = seedDocument("Chapter One", "V", "the lighthouse stood alone");
+        ObjectNode theirs = contentOnly("the lighthouse stood alone");
+        theirs.put("synopsis", "Theirs.");
+        sync.push(projectId, deviceB, List.of(update(docId, 1L, theirs)));
+
+        // Device A rewrote the card against version 1, and sends the body back untouched.
+        ObjectNode mine = contentOnly("the lighthouse stood alone");
+        mine.put("synopsis", "Mine.");
+        mine.put("notes", "Check the tide tables.");
+        PushResponse response = sync.push(projectId, deviceA, List.of(update(docId, 1L, mine)));
+
+        assertThat(response.conflicts()).hasSize(1);
+        UUID copyId = response.conflicts().get(0).conflictCopyId();
+        assertThat(synopsisOf(copyId)).isEqualTo("Mine.");
+        assertThat(jdbc.sql("SELECT notes FROM document WHERE id = :id")
+                .param("id", copyId).query(String.class).single()).isEqualTo("Check the tide tables.");
+        assertThat(synopsisOf(docId)).isEqualTo("Theirs.");
+    }
+
+    @Test
+    @DisplayName("a conflict copy takes from the original the card its change never mentioned")
+    void aCopyOfProseKeepsTheOriginalsCard() {
+        UUID docId = seedDocument("Chapter One", "V", "first draft");
+        ObjectNode theirs = contentOnly("their draft");
+        theirs.put("synopsis", "She climbs the tower.");
+        sync.push(projectId, deviceB, List.of(update(docId, 1L, theirs)));
+
+        PushResponse response = sync.push(projectId, deviceA, List.of(update(docId, 1L, contentOnly("my draft"))));
+
+        UUID copyId = response.conflicts().get(0).conflictCopyId();
+        assertThat(synopsisOf(copyId)).isEqualTo("She climbs the tower.");
+    }
 }

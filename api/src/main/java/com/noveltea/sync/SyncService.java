@@ -754,7 +754,7 @@ public class SyncService {
             }
             // An update for a document the server does not have. Rather than discard the
             // author's text, preserve it as a new item and let them decide.
-            UUID copyId = createOrphanCopy(projectId, deviceId, change.entityId(), content);
+            UUID copyId = createOrphanCopy(projectId, deviceId, change, content);
             conflicts.add(new ConflictRecord(
                     change.entityId(), "document", ConflictReason.ENTITY_MISSING, copyId, null));
             return;
@@ -777,7 +777,7 @@ public class SyncService {
                 // Re-delivery of a create whose response was lost. Accept silently.
                 applied.add(new AppliedChange(change.entityId(), "document", serverVersion));
             } else {
-                UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content, base);
+                UUID copyId = createConflictCopy(projectId, deviceId, change, content, base);
                 conflicts.add(new ConflictRecord(
                         change.entityId(), "document", ConflictReason.DUPLICATE_CREATE, copyId, serverVersion));
             }
@@ -825,7 +825,7 @@ public class SyncService {
         }
 
         // Stale base_version: someone else moved the document on. Never merge prose.
-        UUID copyId = createConflictCopy(projectId, deviceId, change.entityId(), content, base);
+        UUID copyId = createConflictCopy(projectId, deviceId, change, content, base);
         conflicts.add(new ConflictRecord(
                 change.entityId(), "document", ConflictReason.VERSION_MISMATCH, copyId, serverVersion));
     }
@@ -967,7 +967,9 @@ public class SyncService {
      * reconciles them. This is the mechanism that makes "never lose an author's work"
      * true rather than aspirational.
      */
-    private UUID createConflictCopy(UUID projectId, UUID deviceId, UUID originalId, String content, Long baseVersion) {
+    private UUID createConflictCopy(
+            UUID projectId, UUID deviceId, ChangeRequest change, String content, Long baseVersion) {
+        UUID originalId = change.entityId();
         Map<String, Object> original = jdbc
                 .sql("""
                         SELECT parent_id, title, order_key FROM binder_item
@@ -1008,7 +1010,7 @@ public class SyncService {
         UUID copyId = UUID.randomUUID();
         insertCopy(projectId, parentId, copyId, conflictTitle(title, deviceId),
                 nextKeyAfter(projectId, parentId, afterKey), deviceId, originalId, baseVersion);
-        insertDocumentRaw(projectId, deviceId, copyId, content);
+        insertDocumentRaw(projectId, deviceId, copyId, content, change);
         if (original != null) {
             // The original is unchanged, but the device that lost the conflict still shows
             // its own text there: it keeps a document's local row while that row has an
@@ -1022,12 +1024,13 @@ public class SyncService {
     }
 
     /** Preserves content whose original binder_item no longer exists, at project root. */
-    private UUID createOrphanCopy(UUID projectId, UUID deviceId, UUID missingId, String content) {
+    private UUID createOrphanCopy(UUID projectId, UUID deviceId, ChangeRequest change, String content) {
+        UUID missingId = change.entityId();
         UUID copyId = UUID.randomUUID();
         String title = "Recovered document " + missingId.toString().substring(0, 8);
         insertCopy(projectId, null, copyId, conflictTitle(title, deviceId),
                 nextKeyAfter(projectId, null, null), deviceId, null, null);
-        insertDocumentRaw(projectId, deviceId, copyId, content);
+        insertDocumentRaw(projectId, deviceId, copyId, content, change);
         return copyId;
     }
 
@@ -1174,13 +1177,36 @@ public class SyncService {
         recordChange(projectId, "document", id, "create", deviceId);
     }
 
-    private void insertDocumentRaw(UUID projectId, UUID deviceId, UUID id, String content) {
+    /**
+     * The body row of a copy: everything the rejected change carried, not only its prose.
+     *
+     * <p>A change refused for its version can differ from the server's row in the index
+     * card alone, the corkboard having sent the body back untouched. A copy holding only
+     * {@code content} would then be a duplicate of the original with an empty card, and
+     * the summary the author wrote would exist nowhere. A field the change did not
+     * mention is taken from the original, by the same rule as an accepted update: absent
+     * means unchanged.
+     */
+    private void insertDocumentRaw(UUID projectId, UUID deviceId, UUID id, String content, ChangeRequest change) {
         jdbc.sql("""
-                INSERT INTO document (id, content, version, updated_by_device_id)
-                VALUES (:id, CAST(:content AS jsonb), 1, :deviceId)
+                INSERT INTO document
+                    (id, content, search_text, word_count, synopsis, notes, version, updated_by_device_id)
+                VALUES (:id, CAST(:content AS jsonb), :searchText, :wordCount,
+                        CASE WHEN CAST(:synopsisSent AS boolean) THEN :synopsis
+                             ELSE (SELECT synopsis FROM document WHERE id = :originalId) END,
+                        CASE WHEN CAST(:notesSent AS boolean) THEN :notes
+                             ELSE (SELECT notes FROM document WHERE id = :originalId) END,
+                        1, :deviceId)
                 """)
                 .param("id", id)
                 .param("content", content)
+                .param("searchText", optionalText(change, "search_text"))
+                .param("wordCount", optionalInt(change, "word_count", 0))
+                .param("synopsisSent", sent(change, "synopsis"))
+                .param("synopsis", optionalText(change, "synopsis"))
+                .param("notesSent", sent(change, "notes"))
+                .param("notes", optionalText(change, "notes"))
+                .param("originalId", change.entityId())
                 .param("deviceId", deviceId)
                 .update();
         recordChange(projectId, "document", id, "create", deviceId);
